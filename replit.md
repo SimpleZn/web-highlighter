@@ -46,6 +46,7 @@ Source files in `extension/` directory:
 - `src/content.css` - Styles for toolbar, highlights, popover
 - `src/background.js` - Service worker for context menus, storage, sync
 - `popup.html/js/css` - Extension popup UI
+- `dashboard.html/js/css` - Built-in dashboard (opens within the extension, not external)
 - `options.html/js/css` - Extension settings page
 
 Build: `npx tsx script/build-extension.ts` outputs to `dist/extension/`

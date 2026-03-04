@@ -117,10 +117,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     document.getElementById("btn-dashboard").addEventListener("click", () => {
-      chrome.storage.local.get(["serverUrl"], (result) => {
-        const url = result.serverUrl || "http://localhost:5000";
-        chrome.tabs.create({ url });
-      });
+      chrome.tabs.create({ url: chrome.runtime.getURL("dashboard.html") });
     });
 
     document.getElementById("btn-settings").addEventListener("click", () => {
