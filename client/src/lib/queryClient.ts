@@ -41,6 +41,12 @@ export const getQueryFn: <T>(options: {
     return await res.json();
   };
 
+export async function exportData(): Promise<unknown> {
+  const res = await fetch("/api/export", { credentials: "include" });
+  await throwIfResNotOk(res);
+  return res.json();
+}
+
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {

@@ -1,23 +1,61 @@
+interface StoredHighlight {
+  id: string;
+  url: string;
+  pageTitle: string;
+  favicon: string;
+  selectedText: string;
+  comment: string | null;
+  styleId: string;
+  styleName: string;
+  styleColor: string;
+  styleBackgroundColor: string;
+  xpath: string;
+  textOffset: number;
+  textLength: number;
+  createdAt: string;
+  synced: boolean;
+}
+
+interface HighlightStyle {
+  id: string;
+  name: string;
+  color: string;
+  backgroundColor: string;
+  borderColor: string;
+  isDefault: boolean;
+  sortOrder: number;
+}
+
+interface PendingSelection {
+  text: string;
+  rangeInfo?: {
+    startContainer: Node;
+    startOffset: number;
+    endContainer: Node;
+    endOffset: number;
+  };
+}
+
 (function () {
   "use strict";
 
   let isEnabled = true;
-  let styles = [];
+  let styles: HighlightStyle[] = [];
   let currentStyleIndex = 0;
-  let toolbar = null;
-  let commentDialog = null;
-  let pendingSelection = null;
+  let toolbar: HTMLDivElement | null = null;
+  let commentDialog: HTMLDivElement | null = null;
+  let pendingSelection: PendingSelection | null = null;
 
   init();
 
-  function init() {
+  function init(): void {
     chrome.storage.local.get(["styles", "enabled"], (result) => {
       styles = result.styles || [];
       isEnabled = result.enabled !== false;
       restoreHighlights();
     });
 
-    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (message.type === "HIGHLIGHT_SELECTION") {
         handleHighlightFromContextMenu();
         sendResponse({ success: true });
@@ -47,25 +85,25 @@
     document.addEventListener("keydown", onKeyDown);
   }
 
-  function getCurrentStyle() {
+  function getCurrentStyle(): HighlightStyle | null {
     if (styles.length === 0) return null;
     const defaultStyle = styles.find((s) => s.isDefault);
     return styles[currentStyleIndex] || defaultStyle || styles[0];
   }
 
-  function onMouseDown(e) {
-    if (toolbar && !toolbar.contains(e.target)) {
+  function onMouseDown(e: MouseEvent): void {
+    if (toolbar && !toolbar.contains(e.target as Node)) {
       removeToolbar();
     }
-    if (commentDialog && !commentDialog.contains(e.target)) {
+    if (commentDialog && !commentDialog.contains(e.target as Node)) {
       removeCommentDialog();
     }
   }
 
-  function onMouseUp(e) {
+  function onMouseUp(e: MouseEvent): void {
     if (!isEnabled) return;
-    if (toolbar && toolbar.contains(e.target)) return;
-    if (commentDialog && commentDialog.contains(e.target)) return;
+    if (toolbar && toolbar.contains(e.target as Node)) return;
+    if (commentDialog && commentDialog.contains(e.target as Node)) return;
 
     const selection = window.getSelection();
     if (!selection || selection.isCollapsed) return;
@@ -79,14 +117,14 @@
     showToolbar(rect, selection, text);
   }
 
-  function onKeyDown(e) {
+  function onKeyDown(e: KeyboardEvent): void {
     if (e.key === "Escape") {
       removeToolbar();
       removeCommentDialog();
     }
   }
 
-  function handleHighlightFromContextMenu() {
+  function handleHighlightFromContextMenu(): void {
     const selection = window.getSelection();
     if (!selection || selection.isCollapsed) return;
     const text = selection.toString().trim();
@@ -94,7 +132,7 @@
     doHighlight(selection, text, null);
   }
 
-  function handleCommentFromContextMenu() {
+  function handleCommentFromContextMenu(): void {
     const selection = window.getSelection();
     if (!selection || selection.isCollapsed) return;
     const text = selection.toString().trim();
@@ -111,21 +149,19 @@
         endContainer: range.endContainer,
         endOffset: range.endOffset,
       };
-    } catch (e) {}
+    } catch (_e) { /* ignore */ }
 
     showCommentDialog(rect);
   }
 
-  function showToolbar(rect, selection, text) {
+  function showToolbar(rect: DOMRect, _selection: Selection, _text: string): void {
     removeToolbar();
 
     toolbar = document.createElement("div");
     toolbar.id = "wh-ext-toolbar";
     toolbar.className = "wh-ext-toolbar";
 
-    const style = getCurrentStyle();
-
-    let stylesHtml = styles
+    const stylesHtml = styles
       .map(
         (s, i) =>
           `<button class="wh-ext-color-btn ${i === currentStyleIndex ? "wh-ext-color-active" : ""}" 
@@ -173,16 +209,16 @@
       toolbar.style.transform = "translateY(-100%)";
     }
 
-    toolbar.querySelectorAll(".wh-ext-color-btn").forEach((btn) => {
+    toolbar.querySelectorAll<HTMLButtonElement>(".wh-ext-color-btn").forEach((btn) => {
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
-        currentStyleIndex = parseInt(btn.dataset.index);
-        toolbar.querySelectorAll(".wh-ext-color-btn").forEach((b) => b.classList.remove("wh-ext-color-active"));
+        currentStyleIndex = parseInt(btn.dataset.index || "0");
+        toolbar!.querySelectorAll(".wh-ext-color-btn").forEach((b) => b.classList.remove("wh-ext-color-active"));
         btn.classList.add("wh-ext-color-active");
       });
     });
 
-    toolbar.querySelector('[data-action="highlight"]').addEventListener("click", (e) => {
+    toolbar.querySelector<HTMLButtonElement>('[data-action="highlight"]')!.addEventListener("click", (e) => {
       e.stopPropagation();
       const sel = window.getSelection();
       if (sel && !sel.isCollapsed) {
@@ -191,7 +227,7 @@
       removeToolbar();
     });
 
-    toolbar.querySelector('[data-action="comment"]').addEventListener("click", (e) => {
+    toolbar.querySelector<HTMLButtonElement>('[data-action="comment"]')!.addEventListener("click", (e) => {
       e.stopPropagation();
       const sel = window.getSelection();
       if (sel && !sel.isCollapsed) {
@@ -213,7 +249,7 @@
     });
   }
 
-  function showCommentDialog(rect) {
+  function showCommentDialog(rect: DOMRect): void {
     removeCommentDialog();
 
     commentDialog = document.createElement("div");
@@ -236,7 +272,7 @@
 
     document.body.appendChild(commentDialog);
 
-    const textarea = commentDialog.querySelector("textarea");
+    const textarea = commentDialog.querySelector<HTMLTextAreaElement>("textarea")!;
     setTimeout(() => textarea.focus(), 50);
 
     const dRect = commentDialog.getBoundingClientRect();
@@ -252,18 +288,18 @@
       }
     });
 
-    commentDialog.querySelector(".wh-ext-dialog-cancel").addEventListener("click", () => {
+    commentDialog.querySelector<HTMLButtonElement>(".wh-ext-dialog-cancel")!.addEventListener("click", () => {
       removeCommentDialog();
     });
 
-    commentDialog.querySelector(".wh-ext-dialog-save").addEventListener("click", () => {
+    commentDialog.querySelector<HTMLButtonElement>(".wh-ext-dialog-save")!.addEventListener("click", () => {
       submitComment();
     });
   }
 
-  function submitComment() {
-    if (!pendingSelection) return;
-    const textarea = commentDialog.querySelector("textarea");
+  function submitComment(): void {
+    if (!pendingSelection || !commentDialog) return;
+    const textarea = commentDialog.querySelector<HTMLTextAreaElement>("textarea")!;
     const comment = textarea.value.trim();
 
     let sel = window.getSelection();
@@ -272,9 +308,9 @@
         const range = document.createRange();
         range.setStart(pendingSelection.rangeInfo.startContainer, pendingSelection.rangeInfo.startOffset);
         range.setEnd(pendingSelection.rangeInfo.endContainer, pendingSelection.rangeInfo.endOffset);
-        sel.removeAllRanges();
-        sel.addRange(range);
-      } catch (e) {}
+        sel!.removeAllRanges();
+        sel!.addRange(range);
+      } catch (_e) { /* ignore */ }
     }
 
     if (sel && !sel.isCollapsed) {
@@ -285,15 +321,15 @@
     pendingSelection = null;
   }
 
-  function doHighlight(selection, text, comment) {
+  function doHighlight(selection: Selection, text: string, comment: string | null): void {
     const style = getCurrentStyle();
     if (!style) return;
 
     const range = selection.getRangeAt(0);
     let xpath = "";
     try {
-      xpath = getXPath(range.startContainer.parentElement || range.startContainer);
-    } catch (e) {}
+      xpath = getXPath((range.startContainer.parentElement || range.startContainer) as Element);
+    } catch (_e) { /* ignore */ }
 
     const mark = document.createElement("mark");
     mark.className = "wh-ext-mark";
@@ -303,7 +339,7 @@
 
     try {
       range.surroundContents(mark);
-    } catch (e) {
+    } catch (_e) {
       const fragment = range.extractContents();
       mark.appendChild(fragment);
       range.insertNode(mark);
@@ -334,14 +370,14 @@
     });
   }
 
-  function addHighlightTooltip(mark, highlight) {
+  function addHighlightTooltip(mark: HTMLElement, highlight: StoredHighlight): void {
     mark.addEventListener("click", (e) => {
       e.stopPropagation();
       showHighlightPopover(mark, highlight);
     });
   }
 
-  function showHighlightPopover(mark, highlight) {
+  function showHighlightPopover(mark: HTMLElement, highlight: StoredHighlight): void {
     const existing = document.getElementById("wh-ext-popover");
     if (existing) existing.remove();
 
@@ -382,24 +418,24 @@
       popover.style.transform = "translateX(0)";
     }
 
-    popover.querySelector(".wh-ext-popover-close").addEventListener("click", () => {
+    popover.querySelector<HTMLButtonElement>(".wh-ext-popover-close")!.addEventListener("click", () => {
       popover.remove();
     });
 
-    popover.querySelector(".wh-ext-popover-delete").addEventListener("click", () => {
+    popover.querySelector<HTMLButtonElement>(".wh-ext-popover-delete")!.addEventListener("click", () => {
       chrome.runtime.sendMessage({ type: "DELETE_HIGHLIGHT", id: highlight.id }, () => {
-        const parent = mark.parentNode;
+        const parent = mark.parentNode!;
         while (mark.firstChild) {
           parent.insertBefore(mark.firstChild, mark);
         }
         parent.removeChild(mark);
-        parent.normalize();
+        (parent as Element).normalize?.();
         popover.remove();
       });
     });
 
-    const closeOnClick = (e) => {
-      if (!popover.contains(e.target) && !mark.contains(e.target)) {
+    const closeOnClick = (e: MouseEvent): void => {
+      if (!popover.contains(e.target as Node) && !mark.contains(e.target as Node)) {
         popover.remove();
         document.removeEventListener("mousedown", closeOnClick);
       }
@@ -407,26 +443,26 @@
     setTimeout(() => document.addEventListener("mousedown", closeOnClick), 100);
   }
 
-  function removeHighlightMark(id) {
-    const marks = document.querySelectorAll(`.wh-ext-mark[data-wh-id="${id}"]`);
+  function removeHighlightMark(id: string): void {
+    const marks = document.querySelectorAll<HTMLElement>(`.wh-ext-mark[data-wh-id="${id}"]`);
     marks.forEach((mark) => {
-      const parent = mark.parentNode;
+      const parent = mark.parentNode!;
       while (mark.firstChild) {
         parent.insertBefore(mark.firstChild, mark);
       }
       parent.removeChild(mark);
-      parent.normalize();
+      (parent as Element).normalize?.();
     });
   }
 
-  function restoreHighlights() {
+  function restoreHighlights(): void {
     const url = normalizeUrl(window.location.href);
     chrome.storage.local.get(["highlights"], (result) => {
-      const highlights = result.highlights || [];
+      const highlights: StoredHighlight[] = result.highlights || [];
       const pageHighlights = highlights.filter((h) => normalizeUrl(h.url) === url);
       if (pageHighlights.length === 0) return;
 
-      const doRestore = () => {
+      const doRestore = (): void => {
         pageHighlights.forEach((h) => tryRestoreHighlight(h));
       };
 
@@ -438,25 +474,31 @@
     });
   }
 
-  function normalizeUrl(url) {
+  function normalizeUrl(url: string): string {
     try {
       const u = new URL(url);
       u.hash = "";
       return u.href.replace(/\/+$/, "");
-    } catch (e) {
+    } catch (_e) {
       return url;
     }
   }
 
-  function collectTextNodes() {
-    const nodes = [];
+  interface TextNodeEntry {
+    node: Text;
+    start: number;
+    len: number;
+  }
+
+  function collectTextNodes(): Text[] {
+    const nodes: Text[] = [];
     const walker = document.createTreeWalker(
       document.body,
       NodeFilter.SHOW_TEXT,
       {
-        acceptNode: function (node) {
+        acceptNode: function (node: Node): number {
           if (!node.textContent) return NodeFilter.FILTER_REJECT;
-          const parent = node.parentElement;
+          const parent = (node as Text).parentElement;
           if (!parent) return NodeFilter.FILTER_ACCEPT;
           if (parent.closest(".wh-ext-mark, .wh-ext-toolbar, .wh-ext-popover, .wh-ext-comment-dialog, #wh-ext-toolbar, #wh-ext-popover, #wh-ext-comment-dialog")) {
             return NodeFilter.FILTER_REJECT;
@@ -469,14 +511,14 @@
         },
       }
     );
-    let n;
+    let n: Node | null;
     while ((n = walker.nextNode())) {
-      nodes.push(n);
+      nodes.push(n as Text);
     }
     return nodes;
   }
 
-  function tryRestoreHighlight(highlight) {
+  function tryRestoreHighlight(highlight: StoredHighlight): void {
     const text = highlight.selectedText;
     if (!text) return;
 
@@ -487,7 +529,7 @@
     if (textNodes.length === 0) return;
 
     for (let i = 0; i < textNodes.length; i++) {
-      const nodeText = textNodes[i].textContent;
+      const nodeText = textNodes[i].textContent || "";
       const idx = nodeText.indexOf(text);
       if (idx !== -1) {
         try {
@@ -496,14 +538,14 @@
           range.setEnd(textNodes[i], idx + text.length);
           applyMarkFromRange(range, highlight);
           return;
-        } catch (e) {}
+        } catch (_e) { /* ignore */ }
       }
     }
 
     let concat = "";
-    const entries = [];
+    const entries: TextNodeEntry[] = [];
     for (let i = 0; i < textNodes.length; i++) {
-      const t = textNodes[i].textContent;
+      const t = textNodes[i].textContent || "";
       entries.push({ node: textNodes[i], start: concat.length, len: t.length });
       concat += t;
     }
@@ -517,9 +559,8 @@
       const normalizedIndex = normalizedConcat.indexOf(normalizedSearch);
       if (normalizedIndex === -1) return;
 
-      let realPos = 0;
       let normPos = 0;
-      const charMap = [];
+      const charMap: number[] = [];
       for (let i = 0; i < concat.length; i++) {
         if (/\s/.test(concat[i])) {
           if (normPos === 0 || !/\s/.test(concat[i - 1])) {
@@ -541,9 +582,9 @@
       }
     }
 
-    let startNode = null;
+    let startNode: Text | null = null;
     let startOffset = 0;
-    let endNode = null;
+    let endNode: Text | null = null;
     let endOffset = 0;
 
     for (const entry of entries) {
@@ -566,10 +607,10 @@
       range.setStart(startNode, startOffset);
       range.setEnd(endNode, endOffset);
       applyMarkFromRange(range, highlight);
-    } catch (e) {}
+    } catch (_e) { /* ignore */ }
   }
 
-  function applyMarkFromRange(range, highlight) {
+  function applyMarkFromRange(range: Range, highlight: StoredHighlight): void {
     const mark = document.createElement("mark");
     mark.className = "wh-ext-mark";
     mark.style.backgroundColor = highlight.styleBackgroundColor || "#FFF59D";
@@ -578,7 +619,7 @@
 
     try {
       range.surroundContents(mark);
-    } catch (e) {
+    } catch (_e) {
       const fragment = range.extractContents();
       mark.appendChild(fragment);
       range.insertNode(mark);
@@ -586,24 +627,24 @@
     addHighlightTooltip(mark, highlight);
   }
 
-  function removeToolbar() {
+  function removeToolbar(): void {
     if (toolbar) {
       toolbar.remove();
       toolbar = null;
     }
   }
 
-  function removeCommentDialog() {
+  function removeCommentDialog(): void {
     if (commentDialog) {
       commentDialog.remove();
       commentDialog = null;
     }
   }
 
-  function getXPath(element) {
+  function getXPath(element: Element): string {
     if (!element) return "";
-    const parts = [];
-    let current = element;
+    const parts: string[] = [];
+    let current: Element | null = element;
     while (current && current.nodeType === Node.ELEMENT_NODE && current !== document.body) {
       let index = 1;
       let sibling = current.previousElementSibling;
@@ -617,33 +658,33 @@
     return "/body/" + parts.join("/");
   }
 
-  function getFavicon() {
+  function getFavicon(): string {
     const link =
       document.querySelector('link[rel="icon"]') ||
       document.querySelector('link[rel="shortcut icon"]') ||
       document.querySelector('link[rel*="icon"]');
     if (link) {
       try {
-        return new URL(link.href, window.location.origin).href;
-      } catch (e) {}
+        return new URL((link as HTMLLinkElement).href, window.location.origin).href;
+      } catch (_e) { /* ignore */ }
     }
     return window.location.origin + "/favicon.ico";
   }
 
-  function escapeHtml(str) {
+  function escapeHtml(str: string): string {
     const div = document.createElement("div");
     div.textContent = str;
     return div.innerHTML;
   }
 
-  function renderMarkdown(text) {
+  function renderMarkdown(text: string): string {
     let html = escapeHtml(text);
     html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, '<pre style="background:#f1f5f9;padding:6px 8px;border-radius:4px;overflow-x:auto;margin:4px 0;font-size:12px;"><code>$2</code></pre>');
     html = html.replace(/`([^`]+)`/g, '<code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;font-size:12px;font-family:monospace;">$1</code>');
     html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
     html = html.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, "<em>$1</em>");
     html = html.replace(/~~(.+?)~~/g, "<del>$1</del>");
-    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, function (m, label, href) {
+    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, function (_m: string, label: string, href: string) {
       if (/^https?:\/\/|^mailto:/i.test(href)) {
         return '<a href="' + href + '" target="_blank" rel="noopener" style="color:#3b82f6;text-decoration:underline;">' + label + '</a>';
       }
@@ -653,13 +694,13 @@
     html = html.replace(/^#{3}\s+(.*)$/gm, '<strong style="font-size:13px;">$1</strong>');
     html = html.replace(/^#{2}\s+(.*)$/gm, '<strong style="font-size:14px;">$1</strong>');
     html = html.replace(/^#{1}\s+(.*)$/gm, '<strong style="font-size:15px;">$1</strong>');
-    var lines = html.split("\n");
-    var out = [];
-    var inUl = false;
-    var inOl = false;
-    for (var i = 0; i < lines.length; i++) {
-      var ulMatch = lines[i].match(/^[-*]\s+(.*)/);
-      var olMatch = lines[i].match(/^\d+\.\s+(.*)/);
+    const lines = html.split("\n");
+    const out: string[] = [];
+    let inUl = false;
+    let inOl = false;
+    for (let i = 0; i < lines.length; i++) {
+      const ulMatch = lines[i].match(/^[-*]\s+(.*)/);
+      const olMatch = lines[i].match(/^\d+\.\s+(.*)/);
       if (ulMatch) {
         if (inOl) { out.push("</ol>"); inOl = false; }
         if (!inUl) { out.push('<ul style="margin:4px 0;padding-left:20px;">'); inUl = true; }

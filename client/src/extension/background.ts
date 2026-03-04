@@ -1,5 +1,56 @@
+interface HighlightData {
+  url: string;
+  pageTitle: string;
+  favicon: string;
+  selectedText: string;
+  comment: string | null;
+  styleId: string;
+  styleName: string;
+  styleColor: string;
+  styleBackgroundColor: string;
+  xpath: string;
+  textOffset: number;
+  textLength: number;
+}
+
+interface StoredHighlight extends HighlightData {
+  id: string;
+  createdAt: string;
+  synced: boolean;
+}
+
+interface HighlightStyle {
+  id: string;
+  name: string;
+  color: string;
+  backgroundColor: string;
+  borderColor: string;
+  isDefault: boolean;
+  sortOrder: number;
+}
+
+interface SyncResult {
+  success: boolean;
+  message?: string;
+  error?: string;
+}
+
+interface SaveResult {
+  success: boolean;
+  highlight?: StoredHighlight;
+}
+
 const CONTEXT_MENU_HIGHLIGHT = "wh-highlight";
 const CONTEXT_MENU_COMMENT = "wh-comment";
+
+const DEFAULT_STYLES: HighlightStyle[] = [
+  { id: "default-yellow", name: "Yellow", color: "#000000", backgroundColor: "#FFF59D", borderColor: "#F9A825", isDefault: true, sortOrder: 0 },
+  { id: "default-green", name: "Green", color: "#000000", backgroundColor: "#A5D6A7", borderColor: "#388E3C", isDefault: false, sortOrder: 1 },
+  { id: "default-blue", name: "Blue", color: "#000000", backgroundColor: "#90CAF9", borderColor: "#1976D2", isDefault: false, sortOrder: 2 },
+  { id: "default-pink", name: "Pink", color: "#000000", backgroundColor: "#F48FB1", borderColor: "#C2185B", isDefault: false, sortOrder: 3 },
+  { id: "default-orange", name: "Orange", color: "#000000", backgroundColor: "#FFCC80", borderColor: "#E65100", isDefault: false, sortOrder: 4 },
+  { id: "default-purple", name: "Purple", color: "#000000", backgroundColor: "#CE93D8", borderColor: "#7B1FA2", isDefault: false, sortOrder: 5 },
+];
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({
@@ -16,15 +67,7 @@ chrome.runtime.onInstalled.addListener(() => {
 
   chrome.storage.local.get(["styles"], (result) => {
     if (!result.styles || result.styles.length === 0) {
-      const defaultStyles = [
-        { id: "default-yellow", name: "Yellow", color: "#000000", backgroundColor: "#FFF59D", borderColor: "#F9A825", isDefault: true, sortOrder: 0 },
-        { id: "default-green", name: "Green", color: "#000000", backgroundColor: "#A5D6A7", borderColor: "#388E3C", isDefault: false, sortOrder: 1 },
-        { id: "default-blue", name: "Blue", color: "#000000", backgroundColor: "#90CAF9", borderColor: "#1976D2", isDefault: false, sortOrder: 2 },
-        { id: "default-pink", name: "Pink", color: "#000000", backgroundColor: "#F48FB1", borderColor: "#C2185B", isDefault: false, sortOrder: 3 },
-        { id: "default-orange", name: "Orange", color: "#000000", backgroundColor: "#FFCC80", borderColor: "#E65100", isDefault: false, sortOrder: 4 },
-        { id: "default-purple", name: "Purple", color: "#000000", backgroundColor: "#CE93D8", borderColor: "#7B1FA2", isDefault: false, sortOrder: 5 },
-      ];
-      chrome.storage.local.set({ styles: defaultStyles, enabled: true });
+      chrome.storage.local.set({ styles: DEFAULT_STYLES, enabled: true });
     }
   });
 });
@@ -45,7 +88,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   }
 });
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === "SAVE_HIGHLIGHT") {
     saveHighlight(message.data).then((result) => {
       sendResponse(result);
@@ -89,11 +132,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
-async function saveHighlight(data) {
+async function saveHighlight(data: HighlightData): Promise<SaveResult> {
   return new Promise((resolve) => {
     chrome.storage.local.get(["highlights"], (result) => {
-      const highlights = result.highlights || [];
-      const highlight = {
+      const highlights: StoredHighlight[] = result.highlights || [];
+      const highlight: StoredHighlight = {
         id: "hl_" + Date.now() + "_" + Math.random().toString(36).substr(2, 9),
         url: data.url,
         pageTitle: data.pageTitle,
@@ -118,19 +161,19 @@ async function saveHighlight(data) {
   });
 }
 
-async function getHighlightsForUrl(url) {
+async function getHighlightsForUrl(url: string): Promise<StoredHighlight[]> {
   return new Promise((resolve) => {
     chrome.storage.local.get(["highlights"], (result) => {
-      const highlights = result.highlights || [];
+      const highlights: StoredHighlight[] = result.highlights || [];
       resolve(highlights.filter((h) => h.url === url));
     });
   });
 }
 
-async function deleteHighlight(id) {
+async function deleteHighlight(id: string): Promise<{ success: boolean }> {
   return new Promise((resolve) => {
     chrome.storage.local.get(["highlights"], (result) => {
-      const highlights = (result.highlights || []).filter((h) => h.id !== id);
+      const highlights = (result.highlights as StoredHighlight[] || []).filter((h) => h.id !== id);
       chrome.storage.local.set({ highlights }, () => {
         resolve({ success: true });
       });
@@ -138,23 +181,23 @@ async function deleteHighlight(id) {
   });
 }
 
-async function syncToServer() {
+async function syncToServer(): Promise<SyncResult> {
   return new Promise((resolve) => {
     chrome.storage.local.get(["highlights", "serverUrl"], async (result) => {
-      const serverUrl = result.serverUrl;
+      const serverUrl = result.serverUrl as string | undefined;
       if (!serverUrl) {
         resolve({ success: false, error: "Server URL not configured" });
         return;
       }
 
-      const highlights = (result.highlights || []).filter((h) => !h.synced);
+      const highlights = ((result.highlights || []) as StoredHighlight[]).filter((h) => !h.synced);
       if (highlights.length === 0) {
         resolve({ success: true, message: "Nothing to sync" });
         return;
       }
 
       try {
-        const pageMap = {};
+        const pageMap: Record<string, { id: string }> = {};
         for (const h of highlights) {
           if (!pageMap[h.url]) {
             const pageRes = await fetch(`${serverUrl}/api/pages`, {
@@ -171,7 +214,7 @@ async function syncToServer() {
         }
 
         const stylesRes = await fetch(`${serverUrl}/api/styles`);
-        const serverStyles = await stylesRes.json();
+        const serverStyles: HighlightStyle[] = await stylesRes.json();
 
         for (const h of highlights) {
           const page = pageMap[h.url];
@@ -212,7 +255,7 @@ async function syncToServer() {
         }
 
         chrome.storage.local.get(["highlights"], (res) => {
-          const all = res.highlights || [];
+          const all = (res.highlights || []) as StoredHighlight[];
           const updated = all.map((existing) => {
             const synced = highlights.find((s) => s.id === existing.id);
             return synced ? { ...existing, synced: true } : existing;
@@ -222,16 +265,16 @@ async function syncToServer() {
 
         resolve({ success: true, message: `Synced ${highlights.length} highlight(s)` });
       } catch (err) {
-        resolve({ success: false, error: err.message });
+        resolve({ success: false, error: (err as Error).message });
       }
     });
   });
 }
 
-async function syncFromServer() {
+async function syncFromServer(): Promise<SyncResult> {
   return new Promise((resolve) => {
     chrome.storage.local.get(["serverUrl"], async (result) => {
-      const serverUrl = result.serverUrl;
+      const serverUrl = result.serverUrl as string | undefined;
       if (!serverUrl) {
         resolve({ success: false, error: "Server URL not configured" });
         return;
@@ -245,7 +288,7 @@ async function syncFromServer() {
         }
         resolve({ success: true, message: "Styles synced from server" });
       } catch (err) {
-        resolve({ success: false, error: err.message });
+        resolve({ success: false, error: (err as Error).message });
       }
     });
   });

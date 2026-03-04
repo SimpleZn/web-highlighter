@@ -155,37 +155,37 @@ export default function Extension() {
                     <span className="text-xs text-muted-foreground">Extension configuration (Manifest V3)</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Badge variant="secondary" className="text-xs font-mono">src/content.js</Badge>
+                    <Badge variant="secondary" className="text-xs font-mono">content.ts</Badge>
                     <span className="text-xs text-muted-foreground">Injected into pages for highlighting</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Badge variant="secondary" className="text-xs font-mono">src/content.css</Badge>
+                    <Badge variant="secondary" className="text-xs font-mono">content.css</Badge>
                     <span className="text-xs text-muted-foreground">Styles for toolbar and highlights</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Badge variant="secondary" className="text-xs font-mono">src/background.js</Badge>
+                    <Badge variant="secondary" className="text-xs font-mono">background.ts</Badge>
                     <span className="text-xs text-muted-foreground">Service worker for context menu & sync</span>
                   </div>
                 </div>
               </div>
               <div>
-                <h3 className="font-medium text-sm mb-2">UI Pages</h3>
+                <h3 className="font-medium text-sm mb-2">UI Pages (Shared React)</h3>
                 <div className="space-y-1.5">
                   <div className="flex items-center gap-2">
-                    <Badge variant="secondary" className="text-xs font-mono">popup.html</Badge>
-                    <span className="text-xs text-muted-foreground">Quick access popup with stats</span>
+                    <Badge variant="secondary" className="text-xs font-mono">popup/</Badge>
+                    <span className="text-xs text-muted-foreground">React popup with stats & style picker</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Badge variant="secondary" className="text-xs font-mono">popup.js</Badge>
-                    <span className="text-xs text-muted-foreground">Popup logic and highlight list</span>
+                    <Badge variant="secondary" className="text-xs font-mono">dashboard/</Badge>
+                    <span className="text-xs text-muted-foreground">Full dashboard (shared client pages)</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Badge variant="secondary" className="text-xs font-mono">options.html</Badge>
-                    <span className="text-xs text-muted-foreground">Full settings page</span>
+                    <Badge variant="secondary" className="text-xs font-mono">options/</Badge>
+                    <span className="text-xs text-muted-foreground">Settings page (shared with client)</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Badge variant="secondary" className="text-xs font-mono">options.js</Badge>
-                    <span className="text-xs text-muted-foreground">Style management & server config</span>
+                    <Badge variant="secondary" className="text-xs font-mono">chrome-storage.ts</Badge>
+                    <span className="text-xs text-muted-foreground">Data adapter for chrome.storage.local</span>
                   </div>
                 </div>
               </div>
