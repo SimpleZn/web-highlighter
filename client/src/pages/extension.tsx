@@ -1,230 +1,10 @@
 import { Card, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Download, Chrome, Code, Highlighter, MessageSquare, Palette, Cloud, CheckCircle2, Copy } from "lucide-react";
+import { Chrome, Code, Highlighter, MessageSquare, Palette, Cloud, CheckCircle2, Copy, MousePointerClick, Settings, Zap } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { useState } from "react";
-
-const MANIFEST_JSON = `{
-  "manifest_version": 3,
-  "name": "Web Highlighter & Comments",
-  "version": "1.0.0",
-  "description": "Highlight text and add comments on any webpage",
-  "permissions": ["storage", "activeTab", "contextMenus"],
-  "action": {
-    "default_popup": "popup.html",
-    "default_icon": {
-      "16": "icons/icon16.png",
-      "48": "icons/icon48.png",
-      "128": "icons/icon128.png"
-    }
-  },
-  "content_scripts": [
-    {
-      "matches": ["<all_urls>"],
-      "css": ["content.css"],
-      "js": ["content.js"]
-    }
-  ],
-  "background": {
-    "service_worker": "background.js"
-  }
-}`;
-
-const CONTENT_JS = `// Web Highlighter Content Script
-(function() {
-  let currentStyle = null;
-  let isEnabled = true;
-
-  // Load styles from storage
-  chrome.storage.local.get(['styles', 'enabled'], (result) => {
-    if (result.styles) currentStyle = result.styles.find(s => s.isDefault) || result.styles[0];
-    if (result.enabled !== undefined) isEnabled = result.enabled;
-  });
-
-  // Listen for text selection
-  document.addEventListener('mouseup', (e) => {
-    if (!isEnabled || !currentStyle) return;
-    const selection = window.getSelection();
-    if (!selection || selection.isCollapsed) return;
-
-    const text = selection.toString().trim();
-    if (!text) return;
-
-    // Show highlight toolbar
-    showToolbar(e.clientX, e.clientY, selection, text);
-  });
-
-  function showToolbar(x, y, selection, text) {
-    removeToolbar();
-    const toolbar = document.createElement('div');
-    toolbar.id = 'wh-toolbar';
-    toolbar.innerHTML = \\\`
-      <button id="wh-highlight-btn" title="Highlight">🖍️</button>
-      <button id="wh-comment-btn" title="Comment">💬</button>
-    \\\`;
-    toolbar.style.cssText = \\\`
-      position: fixed; left: \\\${x}px; top: \\\${y - 45}px;
-      background: white; border-radius: 8px;
-      box-shadow: 0 4px 12px rgba(0,0,0,.15);
-      padding: 4px; display: flex; gap: 2px; z-index: 999999;
-    \\\`;
-    document.body.appendChild(toolbar);
-
-    toolbar.querySelector('#wh-highlight-btn').onclick = () => {
-      highlightSelection(selection, text);
-      removeToolbar();
-    };
-    toolbar.querySelector('#wh-comment-btn').onclick = () => {
-      const comment = prompt('Add a comment:');
-      if (comment) highlightSelection(selection, text, comment);
-      removeToolbar();
-    };
-
-    setTimeout(() => removeToolbar(), 5000);
-  }
-
-  function removeToolbar() {
-    const el = document.getElementById('wh-toolbar');
-    if (el) el.remove();
-  }
-
-  function highlightSelection(selection, text, comment) {
-    const range = selection.getRangeAt(0);
-    const mark = document.createElement('mark');
-    mark.style.backgroundColor = currentStyle.backgroundColor;
-    mark.style.color = currentStyle.color;
-    mark.style.borderRadius = '2px';
-    mark.style.padding = '1px 2px';
-    mark.className = 'wh-highlight';
-    range.surroundContents(mark);
-
-    const highlight = {
-      id: Date.now().toString(),
-      url: window.location.href,
-      title: document.title,
-      text, comment,
-      style: currentStyle,
-      xpath: getXPath(mark),
-      createdAt: new Date().toISOString()
-    };
-
-    chrome.storage.local.get(['highlights'], (result) => {
-      const highlights = result.highlights || [];
-      highlights.push(highlight);
-      chrome.storage.local.set({ highlights });
-    });
-
-    selection.removeAllRanges();
-  }
-
-  function getXPath(element) {
-    const parts = [];
-    let current = element;
-    while (current && current.nodeType === Node.ELEMENT_NODE) {
-      let index = 1;
-      let sibling = current.previousSibling;
-      while (sibling) {
-        if (sibling.nodeType === Node.ELEMENT_NODE && sibling.tagName === current.tagName) index++;
-        sibling = sibling.previousSibling;
-      }
-      parts.unshift(current.tagName.toLowerCase() + '[' + index + ']');
-      current = current.parentNode;
-    }
-    return '/' + parts.join('/');
-  }
-
-  chrome.runtime.onMessage.addListener((msg) => {
-    if (msg.type === 'SET_STYLE') currentStyle = msg.style;
-    if (msg.type === 'TOGGLE') isEnabled = msg.enabled;
-  });
-})();`;
-
-const CONTENT_CSS = `.wh-highlight {
-  cursor: pointer;
-  transition: opacity 0.2s;
-}
-.wh-highlight:hover {
-  opacity: 0.8;
-}
-#wh-toolbar button {
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  font-size: 18px;
-  padding: 6px 8px;
-  border-radius: 6px;
-  transition: background 0.15s;
-}
-#wh-toolbar button:hover {
-  background: #f0f0f0;
-}`;
-
-const POPUP_HTML = `<!DOCTYPE html>
-<html>
-<head>
-  <style>
-    body { width: 320px; font-family: system-ui; padding: 16px; margin: 0; }
-    h1 { font-size: 16px; margin: 0 0 12px; }
-    .stats { display: flex; gap: 12px; margin-bottom: 16px; }
-    .stat { flex: 1; text-align: center; padding: 8px; background: #f5f5f5; border-radius: 8px; }
-    .stat-value { font-size: 20px; font-weight: 600; }
-    .stat-label { font-size: 11px; color: #666; }
-    .btn { width: 100%; padding: 10px; border: none; border-radius: 8px;
-      background: #3b82f6; color: white; cursor: pointer; font-size: 13px; margin-top: 8px; }
-    .btn:hover { background: #2563eb; }
-    .btn-outline { background: white; color: #333; border: 1px solid #ddd; }
-    .btn-outline:hover { background: #f5f5f5; }
-  </style>
-</head>
-<body>
-  <h1>Web Highlighter</h1>
-  <div class="stats">
-    <div class="stat"><div class="stat-value" id="h-count">0</div><div class="stat-label">Highlights</div></div>
-    <div class="stat"><div class="stat-value" id="c-count">0</div><div class="stat-label">Comments</div></div>
-  </div>
-  <button class="btn" id="toggle-btn">Disable Highlighting</button>
-  <button class="btn btn-outline" id="dashboard-btn">Open Dashboard</button>
-  <script src="popup.js"></script>
-</body>
-</html>`;
-
-const POPUP_JS = `chrome.storage.local.get(['highlights', 'enabled'], (result) => {
-  const highlights = result.highlights || [];
-  const comments = highlights.filter(h => h.comment).length;
-  document.getElementById('h-count').textContent = highlights.length;
-  document.getElementById('c-count').textContent = comments;
-
-  const enabled = result.enabled !== false;
-  const btn = document.getElementById('toggle-btn');
-  btn.textContent = enabled ? 'Disable Highlighting' : 'Enable Highlighting';
-  btn.onclick = () => {
-    chrome.storage.local.set({ enabled: !enabled });
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      chrome.tabs.sendMessage(tabs[0].id, { type: 'TOGGLE', enabled: !enabled });
-    });
-    btn.textContent = !enabled ? 'Disable Highlighting' : 'Enable Highlighting';
-  };
-});
-
-document.getElementById('dashboard-btn').onclick = () => {
-  chrome.tabs.create({ url: 'DASHBOARD_URL' });
-};`;
-
-const BACKGROUND_JS = `chrome.runtime.onInstalled.addListener(() => {
-  chrome.contextMenus.create({
-    id: 'highlight-selection',
-    title: 'Highlight Selection',
-    contexts: ['selection']
-  });
-});
-
-chrome.contextMenus.onClicked.addListener((info, tab) => {
-  if (info.menuItemId === 'highlight-selection') {
-    chrome.tabs.sendMessage(tab.id, { type: 'HIGHLIGHT_SELECTION' });
-  }
-});`;
 
 function CodeBlock({ code, filename }: { code: string; filename: string }) {
   const { toast } = useToast();
@@ -255,29 +35,46 @@ function CodeBlock({ code, filename }: { code: string; filename: string }) {
 
 export default function Extension() {
   const features = [
-    { icon: Highlighter, title: "Text Highlighting", desc: "Select any text on a webpage and highlight it with customizable colors" },
-    { icon: MessageSquare, title: "Inline Comments", desc: "Add comments to your highlights for notes and context" },
-    { icon: Palette, title: "Custom Styles", desc: "Configure multiple highlight styles with different colors" },
-    { icon: Cloud, title: "Cloud Sync Ready", desc: "Data stored locally with API endpoints ready for cloud sync" },
+    { icon: MousePointerClick, title: "Right-Click Menu", desc: "Select text, right-click to highlight or add a comment instantly" },
+    { icon: Highlighter, title: "Inline Toolbar", desc: "A floating toolbar appears on text selection for quick highlighting" },
+    { icon: MessageSquare, title: "Inline Comments", desc: "Add comments directly on highlighted text with a popup dialog" },
+    { icon: Palette, title: "Multiple Styles", desc: "Choose from 6 default colors or create custom highlight styles" },
+    { icon: Cloud, title: "Server Sync", desc: "Sync your highlights to this dashboard for cloud backup" },
+    { icon: Settings, title: "Configurable", desc: "Options page to manage styles, server URL, and data export" },
+  ];
+
+  const steps = [
+    { num: "1", title: "Build the Extension", desc: "Run the build command in the Replit shell to generate the extension package." },
+    { num: "2", title: "Open Chrome Extensions", desc: "Navigate to chrome://extensions in your Chrome browser." },
+    { num: "3", title: "Enable Developer Mode", desc: "Toggle the 'Developer mode' switch in the top right corner." },
+    { num: "4", title: "Load Unpacked", desc: "Click 'Load unpacked' and select the dist/extension folder from this project." },
+    { num: "5", title: "Configure Server URL", desc: "Click the extension icon, go to Settings, and enter this dashboard's URL for sync." },
+  ];
+
+  const usageSteps = [
+    { icon: MousePointerClick, title: "Select Text", desc: "Select any text on a webpage. A floating toolbar appears, or right-click for the context menu." },
+    { icon: Highlighter, title: "Highlight", desc: "Click 'Highlight' to mark the text, or choose a color first from the toolbar." },
+    { icon: MessageSquare, title: "Comment", desc: "Click 'Comment' to add a note. A dialog appears where you can type your comment." },
+    { icon: Zap, title: "Manage", desc: "Click highlighted text to see options. Use the popup to view all highlights on the current page." },
   ];
 
   return (
     <div className="space-y-8">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight" data-testid="text-extension-title">Chrome Extension</h1>
-        <p className="text-muted-foreground mt-1">Get the browser extension to start highlighting text on any webpage.</p>
+        <p className="text-muted-foreground mt-1">Highlight text and add comments on any webpage, synced to this dashboard.</p>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {features.map((f, i) => (
           <Card key={i}>
-            <CardContent className="flex items-start gap-4 p-5">
-              <div className="flex items-center justify-center w-10 h-10 rounded-md bg-primary/10 text-primary flex-shrink-0">
-                <f.icon className="w-5 h-5" />
+            <CardContent className="flex items-start gap-3 p-4">
+              <div className="flex items-center justify-center w-9 h-9 rounded-md bg-primary/10 text-primary flex-shrink-0">
+                <f.icon className="w-4 h-4" />
               </div>
               <div>
                 <h3 className="font-medium text-sm">{f.title}</h3>
-                <p className="text-xs text-muted-foreground mt-1">{f.desc}</p>
+                <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{f.desc}</p>
               </div>
             </CardContent>
           </Card>
@@ -286,46 +83,124 @@ export default function Extension() {
 
       <Card>
         <CardContent className="p-6">
-          <div className="flex items-start gap-4">
-            <div className="flex items-center justify-center w-12 h-12 rounded-md bg-primary/10 text-primary flex-shrink-0">
-              <Chrome className="w-6 h-6" />
+          <div className="flex items-center gap-3 mb-5">
+            <div className="flex items-center justify-center w-10 h-10 rounded-md bg-primary text-primary-foreground flex-shrink-0">
+              <Chrome className="w-5 h-5" />
             </div>
-            <div className="flex-1">
-              <h2 className="text-lg font-medium">Installation Guide</h2>
-              <ol className="mt-3 space-y-2 text-sm text-muted-foreground list-decimal list-inside">
-                <li>Create a new folder on your computer for the extension files</li>
-                <li>Copy each file below into the folder with the exact filename shown</li>
-                <li>Open Chrome and navigate to <code className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">chrome://extensions</code></li>
-                <li>Enable "Developer mode" in the top right corner</li>
-                <li>Click "Load unpacked" and select your extension folder</li>
-                <li>The extension icon will appear in your toolbar</li>
-              </ol>
+            <div>
+              <h2 className="text-lg font-semibold">Installation</h2>
+              <p className="text-sm text-muted-foreground">Set up the extension in your Chrome browser</p>
             </div>
+          </div>
+          <div className="space-y-4">
+            {steps.map((step) => (
+              <div key={step.num} className="flex items-start gap-4">
+                <div className="flex items-center justify-center w-7 h-7 rounded-full bg-muted text-sm font-semibold flex-shrink-0">
+                  {step.num}
+                </div>
+                <div>
+                  <h3 className="font-medium text-sm">{step.title}</h3>
+                  <p className="text-sm text-muted-foreground mt-0.5">{step.desc}</p>
+                  {step.num === "1" && (
+                    <div className="mt-2 bg-muted rounded-md px-3 py-2">
+                      <code className="text-xs font-mono">npx tsx script/build-extension.ts</code>
+                    </div>
+                  )}
+                  {step.num === "5" && (
+                    <div className="mt-2 bg-muted rounded-md px-3 py-2">
+                      <code className="text-xs font-mono text-muted-foreground">
+                        Enter this dashboard URL in the extension's Settings page
+                      </code>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="p-6">
+          <h2 className="text-lg font-semibold mb-4">How to Use</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {usageSteps.map((step, i) => (
+              <div key={i} className="flex items-start gap-3 p-3 rounded-md bg-muted/50">
+                <div className="flex items-center justify-center w-8 h-8 rounded-md bg-primary/10 text-primary flex-shrink-0">
+                  <step.icon className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-medium text-sm">{step.title}</h3>
+                  <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{step.desc}</p>
+                </div>
+              </div>
+            ))}
           </div>
         </CardContent>
       </Card>
 
       <div>
-        <h2 className="text-lg font-medium mb-4 flex items-center gap-2">
+        <div className="flex items-center gap-2 mb-4">
           <Code className="w-5 h-5" />
-          Extension Source Files
-        </h2>
-        <Tabs defaultValue="manifest" className="w-full">
-          <TabsList className="mb-4 flex-wrap h-auto gap-1">
-            <TabsTrigger value="manifest" data-testid="tab-manifest">manifest.json</TabsTrigger>
-            <TabsTrigger value="content-js" data-testid="tab-content-js">content.js</TabsTrigger>
-            <TabsTrigger value="content-css" data-testid="tab-content-css">content.css</TabsTrigger>
-            <TabsTrigger value="popup-html" data-testid="tab-popup-html">popup.html</TabsTrigger>
-            <TabsTrigger value="popup-js" data-testid="tab-popup-js">popup.js</TabsTrigger>
-            <TabsTrigger value="background" data-testid="tab-background">background.js</TabsTrigger>
-          </TabsList>
-          <TabsContent value="manifest"><CodeBlock code={MANIFEST_JSON} filename="manifest.json" /></TabsContent>
-          <TabsContent value="content-js"><CodeBlock code={CONTENT_JS} filename="content.js" /></TabsContent>
-          <TabsContent value="content-css"><CodeBlock code={CONTENT_CSS} filename="content.css" /></TabsContent>
-          <TabsContent value="popup-html"><CodeBlock code={POPUP_HTML} filename="popup.html" /></TabsContent>
-          <TabsContent value="popup-js"><CodeBlock code={POPUP_JS} filename="popup.js" /></TabsContent>
-          <TabsContent value="background"><CodeBlock code={BACKGROUND_JS} filename="background.js" /></TabsContent>
-        </Tabs>
+          <h2 className="text-lg font-semibold">Extension Architecture</h2>
+        </div>
+        <Card>
+          <CardContent className="p-5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <h3 className="font-medium text-sm mb-2">Core Files</h3>
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <Badge variant="secondary" className="text-xs font-mono">manifest.json</Badge>
+                    <span className="text-xs text-muted-foreground">Extension configuration (Manifest V3)</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="secondary" className="text-xs font-mono">src/content.js</Badge>
+                    <span className="text-xs text-muted-foreground">Injected into pages for highlighting</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="secondary" className="text-xs font-mono">src/content.css</Badge>
+                    <span className="text-xs text-muted-foreground">Styles for toolbar and highlights</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="secondary" className="text-xs font-mono">src/background.js</Badge>
+                    <span className="text-xs text-muted-foreground">Service worker for context menu & sync</span>
+                  </div>
+                </div>
+              </div>
+              <div>
+                <h3 className="font-medium text-sm mb-2">UI Pages</h3>
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <Badge variant="secondary" className="text-xs font-mono">popup.html</Badge>
+                    <span className="text-xs text-muted-foreground">Quick access popup with stats</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="secondary" className="text-xs font-mono">popup.js</Badge>
+                    <span className="text-xs text-muted-foreground">Popup logic and highlight list</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="secondary" className="text-xs font-mono">options.html</Badge>
+                    <span className="text-xs text-muted-foreground">Full settings page</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="secondary" className="text-xs font-mono">options.js</Badge>
+                    <span className="text-xs text-muted-foreground">Style management & server config</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="mt-4 pt-4 border-t border-border">
+              <h3 className="font-medium text-sm mb-2">Data Flow</h3>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                Content script detects text selection and shows a toolbar or responds to context menu.
+                Highlights are saved to <code className="px-1 py-0.5 bg-muted rounded text-[11px]">chrome.storage.local</code>.
+                The background service worker handles context menus and syncs data to the platform API when requested.
+                Styles can be synced bidirectionally between the extension and the server.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     </div>
   );
