@@ -312,7 +312,7 @@
     selection.removeAllRanges();
 
     const data = {
-      url: window.location.href,
+      url: normalizeUrl(window.location.href),
       pageTitle: document.title,
       favicon: getFavicon(),
       selectedText: text,
@@ -420,25 +420,50 @@
   }
 
   function restoreHighlights() {
-    chrome.runtime.sendMessage(
-      { type: "GET_HIGHLIGHTS_FOR_URL", url: window.location.href },
-      (response) => {
-        if (!response || !response.highlights || response.highlights.length === 0) return;
-        response.highlights.forEach((highlight) => {
-          tryRestoreHighlight(highlight);
+    const url = normalizeUrl(window.location.href);
+    chrome.storage.local.get(["highlights"], (result) => {
+      const highlights = result.highlights || [];
+      const pageHighlights = highlights.filter((h) => normalizeUrl(h.url) === url);
+      if (pageHighlights.length === 0) return;
+
+      if (document.readyState === "complete") {
+        pageHighlights.forEach((h) => tryRestoreHighlight(h));
+      } else {
+        window.addEventListener("load", () => {
+          pageHighlights.forEach((h) => tryRestoreHighlight(h));
         });
       }
-    );
+    });
+  }
+
+  function normalizeUrl(url) {
+    try {
+      const u = new URL(url);
+      u.hash = "";
+      return u.href.replace(/\/+$/, "");
+    } catch (e) {
+      return url;
+    }
   }
 
   function tryRestoreHighlight(highlight) {
     const text = highlight.selectedText;
     if (!text) return;
 
+    const existing = document.querySelector(`.wh-ext-mark[data-wh-id="${highlight.id}"]`);
+    if (existing) return;
+
     const treeWalker = document.createTreeWalker(
       document.body,
       NodeFilter.SHOW_TEXT,
-      null
+      {
+        acceptNode: function (node) {
+          if (node.parentElement && node.parentElement.closest(".wh-ext-mark, .wh-ext-toolbar, .wh-ext-popover, .wh-ext-comment-dialog")) {
+            return NodeFilter.FILTER_REJECT;
+          }
+          return NodeFilter.FILTER_ACCEPT;
+        },
+      }
     );
 
     let node;
@@ -460,11 +485,79 @@
 
         range.surroundContents(mark);
         addHighlightTooltip(mark, highlight);
-        break;
+        return;
       } catch (e) {
-        // surroundContents can fail on cross-element ranges; skip
+        // surroundContents failed; try extractContents approach
       }
     }
+
+    tryRestoreHighlightCrossElement(highlight);
+  }
+
+  function tryRestoreHighlightCrossElement(highlight) {
+    const text = highlight.selectedText;
+    if (!text) return;
+
+    const bodyText = document.body.innerText || "";
+    const textIndex = bodyText.indexOf(text);
+    if (textIndex === -1) return;
+
+    const treeWalker = document.createTreeWalker(
+      document.body,
+      NodeFilter.SHOW_TEXT,
+      {
+        acceptNode: function (node) {
+          if (node.parentElement && node.parentElement.closest(".wh-ext-mark, .wh-ext-toolbar, .wh-ext-popover, .wh-ext-comment-dialog")) {
+            return NodeFilter.FILTER_REJECT;
+          }
+          return NodeFilter.FILTER_ACCEPT;
+        },
+      }
+    );
+
+    let charCount = 0;
+    let startNode = null;
+    let startOffset = 0;
+    let endNode = null;
+    let endOffset = 0;
+    let node;
+
+    while ((node = treeWalker.nextNode())) {
+      const len = node.textContent.length;
+      if (!startNode && charCount + len > textIndex) {
+        startNode = node;
+        startOffset = textIndex - charCount;
+      }
+      if (startNode && charCount + len >= textIndex + text.length) {
+        endNode = node;
+        endOffset = textIndex + text.length - charCount;
+        break;
+      }
+      charCount += len;
+    }
+
+    if (!startNode || !endNode) return;
+
+    try {
+      const range = document.createRange();
+      range.setStart(startNode, startOffset);
+      range.setEnd(endNode, endOffset);
+
+      const mark = document.createElement("mark");
+      mark.className = "wh-ext-mark";
+      mark.style.backgroundColor = highlight.styleBackgroundColor || "#FFF59D";
+      mark.style.color = highlight.styleColor || "#000000";
+      mark.dataset.whId = highlight.id;
+
+      if (startNode === endNode) {
+        range.surroundContents(mark);
+      } else {
+        const fragment = range.extractContents();
+        mark.appendChild(fragment);
+        range.insertNode(mark);
+      }
+      addHighlightTooltip(mark, highlight);
+    } catch (e) {}
   }
 
   function removeToolbar() {
