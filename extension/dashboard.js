@@ -207,7 +207,7 @@ document.addEventListener("DOMContentLoaded", () => {
       </div>
       ${h.comment ? `
         <div class="highlight-comments">
-          <div class="highlight-comment-text">${escapeHtml(h.comment)}</div>
+          <div class="highlight-comment-text">${renderMarkdown(h.comment)}</div>
         </div>
       ` : ""}
       <div class="highlight-actions">
@@ -374,6 +374,51 @@ document.addEventListener("DOMContentLoaded", () => {
     const div = document.createElement("div");
     div.textContent = str || "";
     return div.innerHTML;
+  }
+
+  function renderMarkdown(text) {
+    let html = escapeHtml(text);
+    html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, '<pre style="background:#f1f5f9;padding:6px 8px;border-radius:4px;overflow-x:auto;margin:4px 0;font-size:12px;"><code>$2</code></pre>');
+    html = html.replace(/`([^`]+)`/g, '<code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;font-size:12px;font-family:monospace;">$1</code>');
+    html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+    html = html.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, "<em>$1</em>");
+    html = html.replace(/~~(.+?)~~/g, "<del>$1</del>");
+    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, function (m, label, href) {
+      if (/^https?:\/\/|^mailto:/i.test(href)) {
+        return '<a href="' + href + '" target="_blank" rel="noopener" style="color:#3b82f6;text-decoration:underline;">' + label + '</a>';
+      }
+      return label;
+    });
+    html = html.replace(/^&gt;\s?(.*)$/gm, '<blockquote style="border-left:2px solid #cbd5e1;padding-left:8px;color:#64748b;margin:4px 0;font-style:italic;">$1</blockquote>');
+    html = html.replace(/^#{3}\s+(.*)$/gm, '<strong style="font-size:13px;">$1</strong>');
+    html = html.replace(/^#{2}\s+(.*)$/gm, '<strong style="font-size:14px;">$1</strong>');
+    html = html.replace(/^#{1}\s+(.*)$/gm, '<strong style="font-size:15px;">$1</strong>');
+    var lines = html.split("\n");
+    var out = [];
+    var inUl = false;
+    var inOl = false;
+    for (var i = 0; i < lines.length; i++) {
+      var ulMatch = lines[i].match(/^[-*]\s+(.*)/);
+      var olMatch = lines[i].match(/^\d+\.\s+(.*)/);
+      if (ulMatch) {
+        if (inOl) { out.push("</ol>"); inOl = false; }
+        if (!inUl) { out.push('<ul style="margin:4px 0;padding-left:20px;">'); inUl = true; }
+        out.push("<li>" + ulMatch[1] + "</li>");
+      } else if (olMatch) {
+        if (inUl) { out.push("</ul>"); inUl = false; }
+        if (!inOl) { out.push('<ol style="margin:4px 0;padding-left:20px;">'); inOl = true; }
+        out.push("<li>" + olMatch[1] + "</li>");
+      } else {
+        if (inUl) { out.push("</ul>"); inUl = false; }
+        if (inOl) { out.push("</ol>"); inOl = false; }
+        out.push(lines[i]);
+      }
+    }
+    if (inUl) out.push("</ul>");
+    if (inOl) out.push("</ol>");
+    html = out.join("\n");
+    html = html.replace(/\n/g, "<br>");
+    return html;
   }
 
   function showToast(message, type) {

@@ -10,6 +10,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { formatDistanceToNow } from "date-fns";
 import { useState, useMemo } from "react";
+import { MarkdownComment } from "@/components/markdown-comment";
 import {
   Select,
   SelectContent,
@@ -180,7 +181,7 @@ export default function Highlights() {
                     {highlight.comments.length > 0 && (
                       <div className="mt-3 space-y-1.5 pl-3 border-l-2 border-border">
                         {highlight.comments.slice(0, 2).map((c) => (
-                          <p key={c.id} className="text-xs text-muted-foreground">{c.text}</p>
+                          <MarkdownComment key={c.id} text={c.text} className="text-xs text-muted-foreground" />
                         ))}
                         {highlight.comments.length > 2 && (
                           <p className="text-xs text-muted-foreground">+{highlight.comments.length - 2} more</p>

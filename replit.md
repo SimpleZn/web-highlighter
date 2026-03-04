@@ -15,7 +15,7 @@ A Chrome extension + web dashboard platform for web page highlighting and commen
 - **highlight_styles**: Configurable highlight colors/styles (name, color, backgroundColor, borderColor, isDefault, sortOrder)
 - **pages**: Web pages where highlights exist (url, title, favicon, lastVisited)
 - **highlights**: Individual text highlights (pageId, styleId, selectedText, xpath, textOffset, textLength)
-- **comments**: Comments attached to highlights (highlightId, text)
+- **comments**: Comments attached to highlights (highlightId, text) — supports Markdown rendering
 
 ## Pages
 
@@ -61,5 +61,6 @@ Build: `npx tsx script/build-extension.ts` outputs to `dist/extension/`
 - `client/src/App.tsx` - Main app with sidebar layout
 - `client/src/components/app-sidebar.tsx` - Navigation sidebar
 - `client/src/components/theme-provider.tsx` - Dark/light mode
+- `client/src/components/markdown-comment.tsx` - Markdown renderer for comments (react-markdown)
 - `script/build-extension.ts` - Extension build script
 - `script/generate-icons.ts` - Icon generator for extension

@@ -11,6 +11,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { formatDistanceToNow } from "date-fns";
 import { useState } from "react";
+import { MarkdownComment } from "@/components/markdown-comment";
 
 function CommentInput({ highlightId }: { highlightId: string }) {
   const [text, setText] = useState("");
@@ -204,7 +205,7 @@ export default function PageDetail() {
                     {highlight.comments.map((comment) => (
                       <div key={comment.id} className="flex items-start justify-between gap-2 group" data-testid={`card-comment-${comment.id}`}>
                         <div className="flex-1">
-                          <p className="text-sm">{comment.text}</p>
+                          <MarkdownComment text={comment.text} className="text-sm" />
                           {comment.createdAt && (
                             <span className="text-xs text-muted-foreground">
                               {formatDistanceToNow(new Date(comment.createdAt), { addSuffix: true })}

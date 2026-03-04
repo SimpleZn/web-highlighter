@@ -204,7 +204,7 @@ export class DatabaseStorage implements IStorage {
       textLength: 148,
     });
 
-    await this.createComment({ highlightId: h1.id, text: "Core definition of JS - important for interviews" });
+    await this.createComment({ highlightId: h1.id, text: "Core definition of JS — **important for interviews**.\n\nKey points:\n- Prototype-based\n- Multi-paradigm\n- Single-threaded\n\nSee also: [MDN Reference](https://developer.mozilla.org/en-US/docs/Web/JavaScript)" });
 
     const h2 = await this.createHighlight({
       pageId: page1.id,
@@ -215,8 +215,8 @@ export class DatabaseStorage implements IStorage {
       textLength: 130,
     });
 
-    await this.createComment({ highlightId: h2.id, text: "ECMAScript vs JavaScript distinction" });
-    await this.createComment({ highlightId: h2.id, text: "Check the latest ES2024 features" });
+    await this.createComment({ highlightId: h2.id, text: "ECMAScript vs JavaScript distinction:\n> ECMAScript is the *specification*, JavaScript is the *implementation*." });
+    await this.createComment({ highlightId: h2.id, text: "Check the latest **ES2024** features, especially:\n1. `Array.groupBy`\n2. `Promise.withResolvers`\n3. Decorators" });
 
     const h3 = await this.createHighlight({
       pageId: page2.id,
@@ -227,7 +227,7 @@ export class DatabaseStorage implements IStorage {
       textLength: 155,
     });
 
-    await this.createComment({ highlightId: h3.id, text: "Component-based architecture is the key concept" });
+    await this.createComment({ highlightId: h3.id, text: "Component-based architecture is the key concept.\n\nExample:\n```jsx\nfunction Thumbnail({ url }) {\n  return <img src={url} />;\n}\n```" });
 
     const h4 = await this.createHighlight({
       pageId: page2.id,
