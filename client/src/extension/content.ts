@@ -85,6 +85,92 @@ interface PendingSelection {
     document.addEventListener("keydown", onKeyDown);
   }
 
+  function shouldSkipHighlightNode(parent: Element | null): boolean {
+    if (!parent) return true;
+    if (parent.closest(".wh-ext-mark, .wh-ext-toolbar, .wh-ext-popover, .wh-ext-comment-dialog, #wh-ext-toolbar, #wh-ext-popover, #wh-ext-comment-dialog")) {
+      return true;
+    }
+    const tag = parent.tagName;
+    if (tag === "SCRIPT" || tag === "STYLE" || tag === "NOSCRIPT" || tag === "TEXTAREA" || tag === "INPUT" || tag === "SELECT" || tag === "BUTTON") {
+      return true;
+    }
+    if (parent.closest("[contenteditable]")) {
+      return true;
+    }
+    return false;
+  }
+
+  function wrapRangeWithMarks(range: Range, opts: { id: string; backgroundColor: string; color: string }): HTMLElement[] {
+    const marks: HTMLElement[] = [];
+    if (range.collapsed) return marks;
+
+    // Step 1: Collect text-node segments that overlap with the range.
+    // Use range.intersectsNode() for containment (same approach as Hypothes.is / Rangy).
+    // Character offsets only need special handling when the text node IS the
+    // range boundary container; all other intersecting nodes are fully selected.
+    const segments: Array<{ node: Text; start: number; end: number }> = [];
+    const root = range.commonAncestorContainer;
+
+    if (root.nodeType === Node.TEXT_NODE) {
+      // Entire range lives inside a single text node
+      const textNode = root as Text;
+      if (textNode.length > 0 && !shouldSkipHighlightNode(textNode.parentElement)) {
+        segments.push({ node: textNode, start: range.startOffset, end: range.endOffset });
+      }
+    } else {
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      let current: Node | null;
+      while ((current = walker.nextNode())) {
+        const textNode = current as Text;
+        if (textNode.length === 0) continue;
+        if (shouldSkipHighlightNode(textNode.parentElement)) continue;
+        if (!range.intersectsNode(textNode)) continue;
+
+        let start = 0;
+        let end = textNode.length;
+
+        if (textNode === range.startContainer) {
+          start = range.startOffset;
+        }
+        if (textNode === range.endContainer) {
+          end = range.endOffset;
+        }
+
+        if (end > start) {
+          segments.push({ node: textNode, start, end });
+        }
+      }
+    }
+
+    if (segments.length === 0) return marks;
+
+    // Step 2: Wrap each segment by splitting the text node and inserting a <mark>.
+    // Split trailing portion *before* leading portion so the start offset stays valid.
+    for (const seg of segments) {
+      try {
+        let targetNode = seg.node;
+
+        if (seg.end < targetNode.length) {
+          targetNode.splitText(seg.end);
+        }
+        if (seg.start > 0) {
+          targetNode = targetNode.splitText(seg.start);
+        }
+
+        const mark = document.createElement("mark");
+        mark.className = "wh-ext-mark";
+        mark.style.backgroundColor = opts.backgroundColor;
+        mark.style.color = opts.color;
+        mark.dataset.whId = opts.id;
+        targetNode.parentNode?.insertBefore(mark, targetNode);
+        mark.appendChild(targetNode);
+        marks.push(mark);
+      } catch (_e) { /* ignore */ }
+    }
+
+    return marks;
+  }
+
   function getCurrentStyle(): HighlightStyle | null {
     if (styles.length === 0) return null;
     const defaultStyle = styles.find((s) => s.isDefault);
@@ -161,15 +247,6 @@ interface PendingSelection {
     toolbar.id = "wh-ext-toolbar";
     toolbar.className = "wh-ext-toolbar";
 
-    const stylesHtml = styles
-      .map(
-        (s, i) =>
-          `<button class="wh-ext-color-btn ${i === currentStyleIndex ? "wh-ext-color-active" : ""}" 
-            data-index="${i}" title="${s.name}"
-            style="background-color: ${s.backgroundColor}; border-color: ${s.borderColor || s.backgroundColor}"></button>`
-      )
-      .join("");
-
     toolbar.innerHTML = `
       <div class="wh-ext-toolbar-row">
         <button class="wh-ext-btn wh-ext-btn-highlight" data-action="highlight" title="Highlight">
@@ -186,8 +263,26 @@ interface PendingSelection {
           <span>Comment</span>
         </button>
       </div>
-      <div class="wh-ext-toolbar-colors">${stylesHtml}</div>
+      <div class="wh-ext-toolbar-colors"></div>
     `;
+
+    const colorsContainer = toolbar.querySelector<HTMLDivElement>(".wh-ext-toolbar-colors");
+    if (colorsContainer) {
+      styles.forEach((s, i) => {
+        const btn = document.createElement("button");
+        btn.className = `wh-ext-color-btn ${i === currentStyleIndex ? "wh-ext-color-active" : ""}`;
+        btn.dataset.index = String(i);
+        btn.title = s.name;
+        if (CSS.supports("color", s.backgroundColor)) {
+          btn.style.backgroundColor = s.backgroundColor;
+        }
+        const borderColor = s.borderColor || s.backgroundColor;
+        if (CSS.supports("color", borderColor)) {
+          btn.style.borderColor = borderColor;
+        }
+        colorsContainer.appendChild(btn);
+      });
+    }
 
     const scrollX = window.scrollX || window.pageXOffset;
     const scrollY = window.scrollY || window.pageYOffset;
@@ -303,13 +398,13 @@ interface PendingSelection {
     const comment = textarea.value.trim();
 
     let sel = window.getSelection();
-    if (pendingSelection.rangeInfo) {
+    if (pendingSelection.rangeInfo && sel) {
       try {
         const range = document.createRange();
         range.setStart(pendingSelection.rangeInfo.startContainer, pendingSelection.rangeInfo.startOffset);
         range.setEnd(pendingSelection.rangeInfo.endContainer, pendingSelection.rangeInfo.endOffset);
-        sel!.removeAllRanges();
-        sel!.addRange(range);
+        sel.removeAllRanges();
+        sel.addRange(range);
       } catch (_e) { /* ignore */ }
     }
 
@@ -326,24 +421,18 @@ interface PendingSelection {
     if (!style) return;
 
     const range = selection.getRangeAt(0);
+    const textOffset = getTextOffset(range);
     let xpath = "";
     try {
       xpath = getXPath((range.startContainer.parentElement || range.startContainer) as Element);
     } catch (_e) { /* ignore */ }
 
-    const mark = document.createElement("mark");
-    mark.className = "wh-ext-mark";
-    mark.style.backgroundColor = style.backgroundColor;
-    mark.style.color = style.color;
-    mark.dataset.whId = "pending";
-
-    try {
-      range.surroundContents(mark);
-    } catch (_e) {
-      const fragment = range.extractContents();
-      mark.appendChild(fragment);
-      range.insertNode(mark);
-    }
+    const marks = wrapRangeWithMarks(range, {
+      id: "pending",
+      backgroundColor: style.backgroundColor,
+      color: style.color,
+    });
+    if (marks.length === 0) return;
 
     selection.removeAllRanges();
 
@@ -358,14 +447,29 @@ interface PendingSelection {
       styleColor: style.color,
       styleBackgroundColor: style.backgroundColor,
       xpath: xpath,
-      textOffset: 0,
+      textOffset: textOffset,
       textLength: text.length,
     };
 
     chrome.runtime.sendMessage({ type: "SAVE_HIGHLIGHT", data }, (response) => {
       if (response && response.success) {
-        mark.dataset.whId = response.highlight.id;
-        addHighlightTooltip(mark, response.highlight);
+        marks.forEach((m) => {
+          m.dataset.whId = response.highlight.id;
+          addHighlightTooltip(m, response.highlight);
+        });
+      } else {
+        marks.forEach((m) => {
+          const parent = m.parentNode;
+          if (parent) {
+            while (m.firstChild) {
+              parent.insertBefore(m.firstChild, m);
+            }
+            parent.removeChild(m);
+            (parent as Element).normalize?.();
+          } else {
+            m.remove();
+          }
+        });
       }
     });
   }
@@ -424,12 +528,7 @@ interface PendingSelection {
 
     popover.querySelector<HTMLButtonElement>(".wh-ext-popover-delete")!.addEventListener("click", () => {
       chrome.runtime.sendMessage({ type: "DELETE_HIGHLIGHT", id: highlight.id }, () => {
-        const parent = mark.parentNode!;
-        while (mark.firstChild) {
-          parent.insertBefore(mark.firstChild, mark);
-        }
-        parent.removeChild(mark);
-        (parent as Element).normalize?.();
+        removeHighlightMark(highlight.id);
         popover.remove();
       });
     });
@@ -444,7 +543,8 @@ interface PendingSelection {
   }
 
   function removeHighlightMark(id: string): void {
-    const marks = document.querySelectorAll<HTMLElement>(`.wh-ext-mark[data-wh-id="${id}"]`);
+    const safeId = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(id) : id.replace(/["\\]/g, "\\$&");
+    const marks = document.querySelectorAll<HTMLElement>(`.wh-ext-mark[data-wh-id=\"${safeId}\"]`);
     marks.forEach((mark) => {
       const parent = mark.parentNode!;
       while (mark.firstChild) {
@@ -527,6 +627,18 @@ interface PendingSelection {
 
     const textNodes = collectTextNodes();
     if (textNodes.length === 0) return;
+
+    const textOffset = Number(highlight.textOffset);
+    if (Number.isFinite(textOffset) && textOffset >= 0 && highlight.textLength > 0) {
+      const rangeFromOffset = buildRangeFromGlobalOffset(textNodes, textOffset, highlight.textLength);
+      if (rangeFromOffset) {
+        const rangeText = rangeFromOffset.toString();
+        if (rangeText === text || normalizeSpaces(rangeText) === normalizeSpaces(text)) {
+          applyMarkFromRange(rangeFromOffset, highlight);
+          return;
+        }
+      }
+    }
 
     for (let i = 0; i < textNodes.length; i++) {
       const nodeText = textNodes[i].textContent || "";
@@ -611,20 +723,54 @@ interface PendingSelection {
   }
 
   function applyMarkFromRange(range: Range, highlight: StoredHighlight): void {
-    const mark = document.createElement("mark");
-    mark.className = "wh-ext-mark";
-    mark.style.backgroundColor = highlight.styleBackgroundColor || "#FFF59D";
-    mark.style.color = highlight.styleColor || "#000000";
-    mark.dataset.whId = highlight.id;
+    const marks = wrapRangeWithMarks(range, {
+      id: highlight.id,
+      backgroundColor: highlight.styleBackgroundColor || "#FFF59D",
+      color: highlight.styleColor || "#000000",
+    });
+    marks.forEach((m) => addHighlightTooltip(m, highlight));
+  }
 
-    try {
-      range.surroundContents(mark);
-    } catch (_e) {
-      const fragment = range.extractContents();
-      mark.appendChild(fragment);
-      range.insertNode(mark);
+  function normalizeSpaces(value: string): string {
+    return value.replace(/\s+/g, " ").trim();
+  }
+
+  function buildRangeFromGlobalOffset(textNodes: Text[], globalStart: number, length: number): Range | null {
+    if (length <= 0) return null;
+    let startNode: Text | null = null;
+    let endNode: Text | null = null;
+    let startOffset = 0;
+    let endOffset = 0;
+    let cursor = 0;
+    const globalEnd = globalStart + length;
+
+    for (const node of textNodes) {
+      const nodeText = node.textContent || "";
+      const nodeStart = cursor;
+      const nodeEnd = nodeStart + nodeText.length;
+
+      if (!startNode && globalStart >= nodeStart && globalStart <= nodeEnd) {
+        startNode = node;
+        startOffset = Math.max(0, globalStart - nodeStart);
+      }
+      if (startNode && globalEnd >= nodeStart && globalEnd <= nodeEnd) {
+        endNode = node;
+        endOffset = Math.max(0, globalEnd - nodeStart);
+        break;
+      }
+
+      cursor = nodeEnd;
     }
-    addHighlightTooltip(mark, highlight);
+
+    if (!startNode || !endNode) return null;
+    try {
+      const range = document.createRange();
+      range.setStart(startNode, startOffset);
+      range.setEnd(endNode, endOffset);
+      return range;
+    } catch (_e) {
+      return null;
+    }
   }
 
   function removeToolbar(): void {
@@ -677,6 +823,31 @@ interface PendingSelection {
     return div.innerHTML;
   }
 
+  function decodeHtml(str: string): string {
+    const textarea = document.createElement("textarea");
+    textarea.innerHTML = str;
+    return textarea.value;
+  }
+
+  function escapeAttribute(str: string): string {
+    return str
+      .replace(/&/g, "&amp;")
+      .replace(/"/g, "&quot;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+
+  function getTextOffset(range: Range): number {
+    try {
+      const preRange = document.createRange();
+      preRange.selectNodeContents(document.body);
+      preRange.setEnd(range.startContainer, range.startOffset);
+      return preRange.toString().length;
+    } catch (_e) {
+      return 0;
+    }
+  }
+
   function renderMarkdown(text: string): string {
     let html = escapeHtml(text);
     html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, '<pre style="background:#f1f5f9;padding:6px 8px;border-radius:4px;overflow-x:auto;margin:4px 0;font-size:12px;"><code>$2</code></pre>');
@@ -685,9 +856,13 @@ interface PendingSelection {
     html = html.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, "<em>$1</em>");
     html = html.replace(/~~(.+?)~~/g, "<del>$1</del>");
     html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, function (_m: string, label: string, href: string) {
-      if (/^https?:\/\/|^mailto:/i.test(href)) {
-        return '<a href="' + href + '" target="_blank" rel="noopener" style="color:#3b82f6;text-decoration:underline;">' + label + '</a>';
-      }
+      const rawHref = decodeHtml(href).trim();
+      try {
+        const parsed = new URL(rawHref, window.location.href);
+        if (parsed.protocol === "http:" || parsed.protocol === "https:" || parsed.protocol === "mailto:") {
+          return '<a href=\"' + escapeAttribute(parsed.toString()) + '\" target=\"_blank\" rel=\"noopener\" style=\"color:#3b82f6;text-decoration:underline;\">' + label + "</a>";
+        }
+      } catch (_e) { /* ignore */ }
       return label;
     });
     html = html.replace(/^&gt;\s?(.*)$/gm, '<blockquote style="border-left:2px solid #cbd5e1;padding-left:8px;color:#64748b;margin:4px 0;font-style:italic;">$1</blockquote>');

@@ -1,42 +1,42 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, timestamp, integer, boolean, jsonb } from "drizzle-orm/pg-core";
+import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
-export const highlightStyles = pgTable("highlight_styles", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+export const highlightStyles = sqliteTable("highlight_styles", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
   name: text("name").notNull(),
   color: text("color").notNull(),
   backgroundColor: text("background_color").notNull(),
   borderColor: text("border_color"),
-  isDefault: boolean("is_default").default(false),
+  isDefault: integer("is_default", { mode: "boolean" }).default(false),
   sortOrder: integer("sort_order").default(0),
 });
 
-export const pages = pgTable("pages", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+export const pages = sqliteTable("pages", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
   url: text("url").notNull(),
   title: text("title").notNull(),
   favicon: text("favicon"),
-  lastVisited: timestamp("last_visited").defaultNow(),
+  lastVisited: integer("last_visited", { mode: "timestamp_ms" }).default(sql`(unixepoch() * 1000)`),
 });
 
-export const highlights = pgTable("highlights", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  pageId: varchar("page_id").notNull(),
-  styleId: varchar("style_id").notNull(),
+export const highlights = sqliteTable("highlights", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  pageId: text("page_id").notNull(),
+  styleId: text("style_id").notNull(),
   selectedText: text("selected_text").notNull(),
   xpath: text("xpath"),
   textOffset: integer("text_offset"),
   textLength: integer("text_length"),
-  createdAt: timestamp("created_at").defaultNow(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).default(sql`(unixepoch() * 1000)`),
 });
 
-export const comments = pgTable("comments", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  highlightId: varchar("highlight_id").notNull(),
+export const comments = sqliteTable("comments", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  highlightId: text("highlight_id").notNull(),
   text: text("text").notNull(),
-  createdAt: timestamp("created_at").defaultNow(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).default(sql`(unixepoch() * 1000)`),
 });
 
 export const insertHighlightStyleSchema = createInsertSchema(highlightStyles).omit({ id: true });
