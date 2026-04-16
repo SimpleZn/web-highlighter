@@ -1,14 +1,21 @@
+interface StoredComment {
+  id: string;
+  text: string;
+  createdAt: string;
+}
+
 interface StoredHighlight {
   id: string;
   url: string;
   pageTitle: string;
   favicon: string;
   selectedText: string;
-  comment: string | null;
+  comments: StoredComment[];
   styleId: string;
   styleName: string;
   styleColor: string;
   styleBackgroundColor: string;
+  styleBorderColor?: string;
   xpath: string;
   textOffset: number;
   textLength: number;
@@ -26,16 +33,6 @@ interface HighlightStyle {
   sortOrder: number;
 }
 
-interface PendingSelection {
-  text: string;
-  rangeInfo?: {
-    startContainer: Node;
-    startOffset: number;
-    endContainer: Node;
-    endOffset: number;
-  };
-}
-
 (function () {
   "use strict";
 
@@ -43,24 +40,19 @@ interface PendingSelection {
   let styles: HighlightStyle[] = [];
   let currentStyleIndex = 0;
   let toolbar: HTMLDivElement | null = null;
-  let commentDialog: HTMLDivElement | null = null;
-  let pendingSelection: PendingSelection | null = null;
 
   init();
 
   function init(): void {
-    chrome.storage.local.get(["styles", "enabled"], (result) => {
-      styles = result.styles || [];
-      isEnabled = result.enabled !== false;
+    chrome.storage.local.get(["styles", "enabled"], (result: Record<string, any>) => {
+      styles = result["styles"] || [];
+      isEnabled = result["enabled"] !== false;
       restoreHighlights();
     });
 
     chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (message.type === "HIGHLIGHT_SELECTION") {
         handleHighlightFromContextMenu();
-        sendResponse({ success: true });
-      } else if (message.type === "COMMENT_SELECTION") {
-        handleCommentFromContextMenu();
         sendResponse({ success: true });
       } else if (message.type === "TOGGLE") {
         isEnabled = message.enabled;
@@ -69,8 +61,8 @@ interface PendingSelection {
         currentStyleIndex = message.index;
         sendResponse({ success: true });
       } else if (message.type === "REFRESH_STYLES") {
-        chrome.storage.local.get(["styles"], (r) => {
-          styles = r.styles || [];
+        chrome.storage.local.get(["styles"], (r: Record<string, any>) => {
+          styles = r["styles"] || [];
           sendResponse({ success: true });
         });
         return true;
@@ -87,7 +79,7 @@ interface PendingSelection {
 
   function shouldSkipHighlightNode(parent: Element | null): boolean {
     if (!parent) return true;
-    if (parent.closest(".wh-ext-mark, .wh-ext-toolbar, .wh-ext-popover, .wh-ext-comment-dialog, #wh-ext-toolbar, #wh-ext-popover, #wh-ext-comment-dialog")) {
+    if (parent.closest(".wh-ext-mark, .wh-ext-toolbar, .wh-ext-popover, #wh-ext-toolbar, #wh-ext-popover")) {
       return true;
     }
     const tag = parent.tagName;
@@ -104,15 +96,10 @@ interface PendingSelection {
     const marks: HTMLElement[] = [];
     if (range.collapsed) return marks;
 
-    // Step 1: Collect text-node segments that overlap with the range.
-    // Use range.intersectsNode() for containment (same approach as Hypothes.is / Rangy).
-    // Character offsets only need special handling when the text node IS the
-    // range boundary container; all other intersecting nodes are fully selected.
     const segments: Array<{ node: Text; start: number; end: number }> = [];
     const root = range.commonAncestorContainer;
 
     if (root.nodeType === Node.TEXT_NODE) {
-      // Entire range lives inside a single text node
       const textNode = root as Text;
       if (textNode.length > 0 && !shouldSkipHighlightNode(textNode.parentElement)) {
         segments.push({ node: textNode, start: range.startOffset, end: range.endOffset });
@@ -129,33 +116,20 @@ interface PendingSelection {
         let start = 0;
         let end = textNode.length;
 
-        if (textNode === range.startContainer) {
-          start = range.startOffset;
-        }
-        if (textNode === range.endContainer) {
-          end = range.endOffset;
-        }
+        if (textNode === range.startContainer) start = range.startOffset;
+        if (textNode === range.endContainer) end = range.endOffset;
 
-        if (end > start) {
-          segments.push({ node: textNode, start, end });
-        }
+        if (end > start) segments.push({ node: textNode, start, end });
       }
     }
 
     if (segments.length === 0) return marks;
 
-    // Step 2: Wrap each segment by splitting the text node and inserting a <mark>.
-    // Split trailing portion *before* leading portion so the start offset stays valid.
     for (const seg of segments) {
       try {
         let targetNode = seg.node;
-
-        if (seg.end < targetNode.length) {
-          targetNode.splitText(seg.end);
-        }
-        if (seg.start > 0) {
-          targetNode = targetNode.splitText(seg.start);
-        }
+        if (seg.end < targetNode.length) targetNode.splitText(seg.end);
+        if (seg.start > 0) targetNode = targetNode.splitText(seg.start);
 
         const mark = document.createElement("mark");
         mark.className = "wh-ext-mark";
@@ -181,15 +155,11 @@ interface PendingSelection {
     if (toolbar && !toolbar.contains(e.target as Node)) {
       removeToolbar();
     }
-    if (commentDialog && !commentDialog.contains(e.target as Node)) {
-      removeCommentDialog();
-    }
   }
 
   function onMouseUp(e: MouseEvent): void {
     if (!isEnabled) return;
     if (toolbar && toolbar.contains(e.target as Node)) return;
-    if (commentDialog && commentDialog.contains(e.target as Node)) return;
 
     const selection = window.getSelection();
     if (!selection || selection.isCollapsed) return;
@@ -200,13 +170,13 @@ interface PendingSelection {
     const range = selection.getRangeAt(0);
     const rect = range.getBoundingClientRect();
 
-    showToolbar(rect, selection, text);
+    showToolbar(rect, selection);
   }
 
   function onKeyDown(e: KeyboardEvent): void {
     if (e.key === "Escape") {
       removeToolbar();
-      removeCommentDialog();
+      closePopover();
     }
   }
 
@@ -215,32 +185,10 @@ interface PendingSelection {
     if (!selection || selection.isCollapsed) return;
     const text = selection.toString().trim();
     if (!text) return;
-    doHighlight(selection, text, null);
+    doHighlight(selection, text);
   }
 
-  function handleCommentFromContextMenu(): void {
-    const selection = window.getSelection();
-    if (!selection || selection.isCollapsed) return;
-    const text = selection.toString().trim();
-    if (!text) return;
-
-    pendingSelection = { text };
-    const range = selection.getRangeAt(0);
-    const rect = range.getBoundingClientRect();
-
-    try {
-      pendingSelection.rangeInfo = {
-        startContainer: range.startContainer,
-        startOffset: range.startOffset,
-        endContainer: range.endContainer,
-        endOffset: range.endOffset,
-      };
-    } catch (_e) { /* ignore */ }
-
-    showCommentDialog(rect);
-  }
-
-  function showToolbar(rect: DOMRect, _selection: Selection, _text: string): void {
+  function showToolbar(rect: DOMRect, _selection: Selection): void {
     removeToolbar();
 
     toolbar = document.createElement("div");
@@ -249,19 +197,19 @@ interface PendingSelection {
 
     toolbar.innerHTML = `
       <div class="wh-ext-toolbar-row">
-        <button class="wh-ext-btn wh-ext-btn-highlight" data-action="highlight" title="Highlight">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="m9 11-6 6v3h9l3-3"></path>
-            <path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"></path>
-          </svg>
-          <span>Highlight</span>
-        </button>
-        <button class="wh-ext-btn wh-ext-btn-comment" data-action="comment" title="Highlight & Comment">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-          </svg>
-          <span>Comment</span>
-        </button>
+        <div class="wh-ext-split-btn">
+          <button class="wh-ext-btn wh-ext-btn-highlight" data-action="highlight" title="Highlight">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m9 11-6 6v3h9l3-3"></path>
+              <path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"></path>
+            </svg>
+            <span>Highlight</span>
+            <span class="wh-ext-current-dot"></span>
+          </button>
+          <button class="wh-ext-btn-chevron" title="Change color">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><polyline points="2 3.5 5 6.5 8 3.5"/></svg>
+          </button>
+        </div>
       </div>
       <div class="wh-ext-toolbar-colors"></div>
     `;
@@ -270,19 +218,33 @@ interface PendingSelection {
     if (colorsContainer) {
       styles.forEach((s, i) => {
         const btn = document.createElement("button");
-        btn.className = `wh-ext-color-btn ${i === currentStyleIndex ? "wh-ext-color-active" : ""}`;
+        const isActive = i === currentStyleIndex;
+        btn.className = `wh-ext-color-btn${isActive ? " wh-ext-color-active" : ""}`;
         btn.dataset.index = String(i);
         btn.title = s.name;
-        if (CSS.supports("color", s.backgroundColor)) {
-          btn.style.backgroundColor = s.backgroundColor;
-        }
-        const borderColor = s.borderColor || s.backgroundColor;
-        if (CSS.supports("color", borderColor)) {
-          btn.style.borderColor = borderColor;
-        }
+        btn.style.backgroundColor = s.backgroundColor;
+        btn.style.boxShadow = isActive
+          ? `0 0 0 2px #fff, 0 0 0 3.5px ${s.borderColor || "#1f2937"}`
+          : "0 1px 3px rgba(0,0,0,0.18)";
         colorsContainer.appendChild(btn);
       });
     }
+
+    // Initial color dot
+    const currentDot = toolbar.querySelector<HTMLSpanElement>(".wh-ext-current-dot")!;
+    const initStyle = styles[currentStyleIndex];
+    if (initStyle) {
+      currentDot.style.backgroundColor = initStyle.backgroundColor;
+      currentDot.style.borderColor = initStyle.borderColor || initStyle.backgroundColor;
+    }
+
+    // Chevron toggle
+    const chevron = toolbar.querySelector<HTMLButtonElement>(".wh-ext-btn-chevron")!;
+    chevron.addEventListener("click", (e) => {
+      e.stopPropagation();
+      colorsContainer?.classList.toggle("wh-ext-colors-open");
+      chevron.classList.toggle("wh-ext-chevron-open");
+    });
 
     const scrollX = window.scrollX || window.pageXOffset;
     const scrollY = window.scrollY || window.pageYOffset;
@@ -308,8 +270,19 @@ interface PendingSelection {
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
         currentStyleIndex = parseInt(btn.dataset.index || "0");
-        toolbar!.querySelectorAll(".wh-ext-color-btn").forEach((b) => b.classList.remove("wh-ext-color-active"));
+        const activeStyle = styles[currentStyleIndex];
+        toolbar!.querySelectorAll<HTMLButtonElement>(".wh-ext-color-btn").forEach((b, idx) => {
+          b.classList.remove("wh-ext-color-active");
+          b.style.boxShadow = "0 1px 3px rgba(0,0,0,0.18)";
+        });
         btn.classList.add("wh-ext-color-active");
+        btn.style.boxShadow = `0 0 0 2px #fff, 0 0 0 3.5px ${activeStyle?.borderColor || "#1f2937"}`;
+        // Sync dot
+        const dot = toolbar!.querySelector<HTMLSpanElement>(".wh-ext-current-dot");
+        if (dot && activeStyle) {
+          dot.style.backgroundColor = activeStyle.backgroundColor;
+          dot.style.borderColor = activeStyle.borderColor || activeStyle.backgroundColor;
+        }
       });
     });
 
@@ -317,106 +290,13 @@ interface PendingSelection {
       e.stopPropagation();
       const sel = window.getSelection();
       if (sel && !sel.isCollapsed) {
-        doHighlight(sel, sel.toString().trim(), null);
+        doHighlight(sel, sel.toString().trim());
       }
       removeToolbar();
     });
-
-    toolbar.querySelector<HTMLButtonElement>('[data-action="comment"]')!.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const sel = window.getSelection();
-      if (sel && !sel.isCollapsed) {
-        const selText = sel.toString().trim();
-        const range = sel.getRangeAt(0);
-        pendingSelection = {
-          text: selText,
-          rangeInfo: {
-            startContainer: range.startContainer,
-            startOffset: range.startOffset,
-            endContainer: range.endContainer,
-            endOffset: range.endOffset,
-          },
-        };
-        const selRect = range.getBoundingClientRect();
-        removeToolbar();
-        showCommentDialog(selRect);
-      }
-    });
   }
 
-  function showCommentDialog(rect: DOMRect): void {
-    removeCommentDialog();
-
-    commentDialog = document.createElement("div");
-    commentDialog.id = "wh-ext-comment-dialog";
-    commentDialog.className = "wh-ext-comment-dialog";
-
-    commentDialog.innerHTML = `
-      <div class="wh-ext-dialog-header">Add Comment</div>
-      <textarea class="wh-ext-dialog-input" placeholder="Enter your comment..." rows="3" autofocus></textarea>
-      <div class="wh-ext-dialog-actions">
-        <button class="wh-ext-dialog-btn wh-ext-dialog-cancel">Cancel</button>
-        <button class="wh-ext-dialog-btn wh-ext-dialog-save">Save</button>
-      </div>
-    `;
-
-    const scrollX = window.scrollX || window.pageXOffset;
-    const scrollY = window.scrollY || window.pageYOffset;
-    commentDialog.style.left = rect.left + scrollX + rect.width / 2 + "px";
-    commentDialog.style.top = rect.bottom + scrollY + 8 + "px";
-
-    document.body.appendChild(commentDialog);
-
-    const textarea = commentDialog.querySelector<HTMLTextAreaElement>("textarea")!;
-    setTimeout(() => textarea.focus(), 50);
-
-    const dRect = commentDialog.getBoundingClientRect();
-    if (dRect.right > window.innerWidth - 8) {
-      commentDialog.style.left = window.innerWidth - dRect.width - 8 + scrollX + "px";
-      commentDialog.style.transform = "translateX(0)";
-    }
-
-    textarea.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        submitComment();
-      }
-    });
-
-    commentDialog.querySelector<HTMLButtonElement>(".wh-ext-dialog-cancel")!.addEventListener("click", () => {
-      removeCommentDialog();
-    });
-
-    commentDialog.querySelector<HTMLButtonElement>(".wh-ext-dialog-save")!.addEventListener("click", () => {
-      submitComment();
-    });
-  }
-
-  function submitComment(): void {
-    if (!pendingSelection || !commentDialog) return;
-    const textarea = commentDialog.querySelector<HTMLTextAreaElement>("textarea")!;
-    const comment = textarea.value.trim();
-
-    let sel = window.getSelection();
-    if (pendingSelection.rangeInfo && sel) {
-      try {
-        const range = document.createRange();
-        range.setStart(pendingSelection.rangeInfo.startContainer, pendingSelection.rangeInfo.startOffset);
-        range.setEnd(pendingSelection.rangeInfo.endContainer, pendingSelection.rangeInfo.endOffset);
-        sel.removeAllRanges();
-        sel.addRange(range);
-      } catch (_e) { /* ignore */ }
-    }
-
-    if (sel && !sel.isCollapsed) {
-      doHighlight(sel, pendingSelection.text, comment || null);
-    }
-
-    removeCommentDialog();
-    pendingSelection = null;
-  }
-
-  function doHighlight(selection: Selection, text: string, comment: string | null): void {
+  function doHighlight(selection: Selection, text: string): void {
     const style = getCurrentStyle();
     if (!style) return;
 
@@ -441,7 +321,6 @@ interface PendingSelection {
       pageTitle: document.title,
       favicon: getFavicon(),
       selectedText: text,
-      comment: comment,
       styleId: style.id,
       styleName: style.name,
       styleColor: style.color,
@@ -455,15 +334,13 @@ interface PendingSelection {
       if (response && response.success) {
         marks.forEach((m) => {
           m.dataset.whId = response.highlight.id;
-          addHighlightTooltip(m, response.highlight);
+          attachPopoverTrigger(m, response.highlight.id);
         });
       } else {
         marks.forEach((m) => {
           const parent = m.parentNode;
           if (parent) {
-            while (m.firstChild) {
-              parent.insertBefore(m.firstChild, m);
-            }
+            while (m.firstChild) parent.insertBefore(m.firstChild, m);
             parent.removeChild(m);
             (parent as Element).normalize?.();
           } else {
@@ -474,82 +351,362 @@ interface PendingSelection {
     });
   }
 
-  function addHighlightTooltip(mark: HTMLElement, highlight: StoredHighlight): void {
+  // ─── Popover ──────────────────────────────────────────────────────────────
+
+  function attachPopoverTrigger(mark: HTMLElement, highlightId: string): void {
     mark.addEventListener("click", (e) => {
       e.stopPropagation();
-      showHighlightPopover(mark, highlight);
+      openPopover(mark, highlightId);
     });
   }
 
-  function showHighlightPopover(mark: HTMLElement, highlight: StoredHighlight): void {
+  function closePopover(): void {
     const existing = document.getElementById("wh-ext-popover");
     if (existing) existing.remove();
+  }
+
+  function openPopover(anchor: HTMLElement, highlightId: string): void {
+    closePopover();
 
     const popover = document.createElement("div");
     popover.id = "wh-ext-popover";
     popover.className = "wh-ext-popover";
+    popover.innerHTML = `<div class="wh-ext-popover-loading">Loading…</div>`;
+    positionPopover(popover, anchor);
+    document.body.appendChild(popover);
 
-    let commentHtml = "";
-    if (highlight.comment) {
-      commentHtml = `<div class="wh-ext-popover-comment">${renderMarkdown(highlight.comment)}</div>`;
-    }
+    chrome.runtime.sendMessage({ type: "GET_HIGHLIGHT", id: highlightId }, (response) => {
+      const highlight: StoredHighlight | null = response?.highlight || null;
+      if (!highlight) { popover.remove(); return; }
+      renderPopover(popover, anchor, highlight);
+    });
+
+    const closeOnOutsideClick = (e: MouseEvent): void => {
+      if (!popover.contains(e.target as Node) && !anchor.contains(e.target as Node)) {
+        popover.remove();
+        document.removeEventListener("mousedown", closeOnOutsideClick);
+      }
+    };
+    setTimeout(() => document.addEventListener("mousedown", closeOnOutsideClick), 100);
+  }
+
+  function positionPopover(popover: HTMLElement, anchor: HTMLElement): void {
+    const rect = anchor.getBoundingClientRect();
+    const scrollX = window.scrollX || window.pageXOffset;
+    const scrollY = window.scrollY || window.pageYOffset;
+    popover.style.left = rect.left + scrollX + rect.width / 2 + "px";
+    popover.style.top = rect.bottom + scrollY + 8 + "px";
+
+    // Arrow element pointing up to anchor
+    const arrow = document.createElement("div");
+    arrow.className = "wh-ext-popover-arrow";
+    arrow.style.cssText = [
+      "all:initial",
+      "position:absolute !important",
+      `left:${rect.left + scrollX + rect.width / 2}px !important`,
+      `top:${rect.bottom + scrollY + 1}px !important`,
+      "transform:translateX(-50%) !important",
+      "width:0 !important",
+      "height:0 !important",
+      "border-left:7px solid transparent !important",
+      "border-right:7px solid transparent !important",
+      "border-bottom:7px solid rgba(0,0,0,0.07) !important",
+      `z-index:${2147483646} !important`,
+      "pointer-events:none !important",
+    ].join(";");
+
+    const arrowInner = document.createElement("div");
+    arrowInner.style.cssText = [
+      "all:initial",
+      "position:absolute !important",
+      "left:-6px !important",
+      "top:2px !important",
+      "width:0 !important",
+      "height:0 !important",
+      "border-left:6px solid transparent !important",
+      "border-right:6px solid transparent !important",
+      "border-bottom:6px solid #ffffff !important",
+    ].join(";");
+    arrow.appendChild(arrowInner);
+    document.body.appendChild(arrow);
+
+    // Remove arrow when popover is removed (use MutationObserver)
+    const obs = new MutationObserver(() => {
+      if (!document.body.contains(popover)) { arrow.remove(); obs.disconnect(); }
+    });
+    obs.observe(document.body, { childList: true, subtree: false });
+  }
+
+  function timeAgo(iso: string): string {
+    const diff = Date.now() - new Date(iso).getTime();
+    const m = Math.floor(diff / 60000);
+    if (m < 1) return "just now";
+    if (m < 60) return `${m}m ago`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h}h ago`;
+    const d = Math.floor(h / 24);
+    return `${d}d ago`;
+  }
+
+  function truncateText(text: string, max: number): string {
+    return text.length <= max ? text : text.slice(0, max).trimEnd() + "…";
+  }
+
+  function renderPopover(popover: HTMLElement, anchor: HTMLElement, highlight: StoredHighlight): void {
+    const comments = highlight.comments || [];
 
     popover.innerHTML = `
       <div class="wh-ext-popover-header">
-        <span class="wh-ext-popover-style" style="background-color: ${highlight.styleBackgroundColor}">${escapeHtml(highlight.styleName || "Highlight")}</span>
-        <button class="wh-ext-popover-close" title="Close">&times;</button>
+        <span class="wh-ext-popover-badge" style="background-color:${highlight.styleBackgroundColor}">
+          <span class="wh-ext-badge-dot" style="background-color:${highlight.styleBorderColor || highlight.styleBackgroundColor}"></span>
+          <span class="wh-ext-badge-name">${escapeHtml(highlight.styleName || "Highlight")}</span>
+        </span>
+        <div class="wh-ext-style-palette"></div>
+        <button class="wh-ext-popover-close" title="Close">
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M1 1l8 8M9 1L1 9"/></svg>
+        </button>
       </div>
-      ${commentHtml}
-      <div class="wh-ext-popover-actions">
-        <button class="wh-ext-popover-btn wh-ext-popover-delete" title="Delete">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
-          Remove
+      <div class="wh-ext-popover-quote" style="border-left-color:${highlight.styleBackgroundColor}">${escapeHtml(truncateText(highlight.selectedText, 120))}</div>
+      <div class="wh-ext-comments-list"></div>
+      <div class="wh-ext-add-comment">
+        <textarea class="wh-ext-add-comment-input" placeholder="Add a comment…" rows="1"></textarea>
+        <div class="wh-ext-add-comment-actions">
+          <span class="wh-ext-add-comment-hint">↵ save &nbsp;·&nbsp; ⇧↵ newline</span>
+          <button class="wh-ext-add-comment-btn">Add</button>
+        </div>
+      </div>
+      <div class="wh-ext-popover-footer">
+        <button class="wh-ext-popover-delete">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+          Remove highlight
         </button>
       </div>
     `;
 
-    const rect = mark.getBoundingClientRect();
-    const scrollX = window.scrollX || window.pageXOffset;
-    const scrollY = window.scrollY || window.pageYOffset;
-    popover.style.left = rect.left + scrollX + rect.width / 2 + "px";
-    popover.style.top = rect.bottom + scrollY + 6 + "px";
+    renderCommentList(popover, highlight.id, comments);
 
-    document.body.appendChild(popover);
+    // Style palette
+    const palette = popover.querySelector<HTMLDivElement>(".wh-ext-style-palette")!;
+    styles.forEach((style) => {
+      const dot = document.createElement("button");
+      dot.className = "wh-ext-style-dot" + (style.id === highlight.styleId ? " wh-ext-style-dot-active" : "");
+      dot.title = style.name;
+      dot.style.cssText = [
+        `background-color:${style.backgroundColor}`,
+        style.id === highlight.styleId
+          ? `box-shadow:0 0 0 2px #fff,0 0 0 3.5px ${style.borderColor || "#1f2937"}`
+          : "box-shadow:0 1px 3px rgba(0,0,0,0.18)",
+      ].join(";");
+      dot.addEventListener("click", () => {
+        chrome.runtime.sendMessage({ type: "UPDATE_HIGHLIGHT_STYLE", id: highlight.id, style }, (resp) => {
+          if (!resp?.success) return;
+          highlight.styleId = style.id;
+          highlight.styleName = style.name;
+          highlight.styleColor = style.color;
+          highlight.styleBackgroundColor = style.backgroundColor;
+          highlight.styleBorderColor = style.borderColor;
 
-    const pRect = popover.getBoundingClientRect();
-    if (pRect.right > window.innerWidth - 8) {
-      popover.style.left = window.innerWidth - pRect.width - 8 + scrollX + "px";
-      popover.style.transform = "translateX(0)";
-    }
+          // Update DOM marks on the page
+          const safeId = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(highlight.id) : highlight.id;
+          document.querySelectorAll<HTMLElement>(`.wh-ext-mark[data-wh-id="${safeId}"]`).forEach((mark) => {
+            mark.style.backgroundColor = style.backgroundColor;
+          });
+
+          // Update badge
+          const badge = popover.querySelector<HTMLElement>(".wh-ext-popover-badge")!;
+          badge.style.backgroundColor = style.backgroundColor;
+          badge.querySelector<HTMLElement>(".wh-ext-badge-dot")!.style.backgroundColor = style.borderColor || style.backgroundColor;
+          badge.querySelector<HTMLElement>(".wh-ext-badge-name")!.textContent = style.name;
+
+          // Update quote accent
+          const quote = popover.querySelector<HTMLElement>(".wh-ext-popover-quote");
+          if (quote) quote.style.borderLeftColor = style.backgroundColor;
+
+          // Update active dot
+          palette.querySelectorAll<HTMLButtonElement>(".wh-ext-style-dot").forEach((d) => {
+            d.classList.remove("wh-ext-style-dot-active");
+            d.style.boxShadow = "0 1px 3px rgba(0,0,0,0.18)";
+          });
+          dot.classList.add("wh-ext-style-dot-active");
+          dot.style.boxShadow = `0 0 0 2px #fff,0 0 0 3.5px ${style.borderColor || "#1f2937"}`;
+        });
+      });
+      palette.appendChild(dot);
+    });
 
     popover.querySelector<HTMLButtonElement>(".wh-ext-popover-close")!.addEventListener("click", () => {
       popover.remove();
     });
 
-    popover.querySelector<HTMLButtonElement>(".wh-ext-popover-delete")!.addEventListener("click", () => {
+    // Clamp horizontal position after render
+    requestAnimationFrame(() => {
+      const pRect = popover.getBoundingClientRect();
+      const scrollX = window.scrollX || window.pageXOffset;
+      if (pRect.right > window.innerWidth - 8) {
+        popover.style.left = window.innerWidth - pRect.width - 8 + scrollX + "px";
+        popover.style.transform = "translateX(0)";
+      }
+    });
+
+    // Add comment
+    const addCommentSection = popover.querySelector<HTMLDivElement>(".wh-ext-add-comment")!;
+    const textarea = popover.querySelector<HTMLTextAreaElement>(".wh-ext-add-comment-input")!;
+    const addBtn = popover.querySelector<HTMLButtonElement>(".wh-ext-add-comment-btn")!;
+
+    // Auto-grow textarea
+    textarea.addEventListener("input", () => {
+      textarea.style.height = "auto";
+      textarea.style.height = Math.min(textarea.scrollHeight, 120) + "px";
+    });
+
+    // Expand/collapse actions on focus
+    textarea.addEventListener("focus", () => addCommentSection.classList.add("is-focused"));
+    textarea.addEventListener("blur", () => {
+      if (!textarea.value.trim()) addCommentSection.classList.remove("is-focused");
+    });
+
+    const submitAdd = () => {
+      const text = textarea.value.trim();
+      if (!text) return;
+      addBtn.disabled = true;
+      chrome.runtime.sendMessage({ type: "ADD_COMMENT", highlightId: highlight.id, text }, (resp) => {
+        if (resp?.success) {
+          highlight.comments = [...(highlight.comments || []), resp.comment];
+          renderCommentList(popover, highlight.id, highlight.comments);
+          textarea.value = "";
+        }
+        addBtn.disabled = false;
+      });
+    };
+
+    textarea.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        submitAdd();
+      }
+    });
+    addBtn.addEventListener("click", submitAdd);
+
+    // Delete highlight
+    popover.querySelector<HTMLButtonElement>(".wh-ext-popover-delete")!.addEventListener("click", (e) => {
+      const btn = e.currentTarget as HTMLButtonElement;
+      btn.disabled = true;
+      btn.textContent = "Removing…";
       chrome.runtime.sendMessage({ type: "DELETE_HIGHLIGHT", id: highlight.id }, () => {
         removeHighlightMark(highlight.id);
         popover.remove();
       });
     });
-
-    const closeOnClick = (e: MouseEvent): void => {
-      if (!popover.contains(e.target as Node) && !mark.contains(e.target as Node)) {
-        popover.remove();
-        document.removeEventListener("mousedown", closeOnClick);
-      }
-    };
-    setTimeout(() => document.addEventListener("mousedown", closeOnClick), 100);
   }
+
+  function renderCommentList(popover: HTMLElement, highlightId: string, comments: StoredComment[]): void {
+    const list = popover.querySelector<HTMLDivElement>(".wh-ext-comments-list")!;
+    list.innerHTML = "";
+
+    if (comments.length === 0) {
+      list.innerHTML = `<div class="wh-ext-no-comments">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        <span>No comments yet</span>
+      </div>`;
+      return;
+    }
+
+    for (const comment of comments) {
+      const item = document.createElement("div");
+      item.className = "wh-ext-comment-item";
+      item.dataset.id = comment.id;
+      item.innerHTML = `
+        <div class="wh-ext-comment-body">
+          <div class="wh-ext-comment-content">
+            <div class="wh-ext-comment-text">${renderMarkdown(comment.text)}</div>
+            <span class="wh-ext-comment-time">${timeAgo(comment.createdAt)}</span>
+          </div>
+          <div class="wh-ext-comment-item-actions">
+            <button class="wh-ext-comment-edit-btn" title="Edit">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            </button>
+            <button class="wh-ext-comment-delete-btn" title="Delete comment">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+            </button>
+          </div>
+        </div>
+      `;
+
+      // Edit
+      item.querySelector<HTMLButtonElement>(".wh-ext-comment-edit-btn")!.addEventListener("click", () => {
+        startEditComment(item, highlightId, comment, (updated) => {
+          const idx = comments.findIndex((c) => c.id === comment.id);
+          if (idx !== -1) { comments[idx] = updated; comment.text = updated.text; }
+          renderCommentList(popover, highlightId, comments);
+        });
+      });
+
+      // Delete
+      item.querySelector<HTMLButtonElement>(".wh-ext-comment-delete-btn")!.addEventListener("click", () => {
+        chrome.runtime.sendMessage({ type: "DELETE_COMMENT", highlightId, commentId: comment.id }, (resp) => {
+          if (resp?.success) {
+            const remaining = comments.filter((c) => c.id !== comment.id);
+            comments.length = 0;
+            remaining.forEach((c) => comments.push(c));
+            renderCommentList(popover, highlightId, comments);
+          }
+        });
+      });
+
+      list.appendChild(item);
+    }
+  }
+
+  function startEditComment(
+    item: HTMLElement,
+    highlightId: string,
+    comment: StoredComment,
+    onSaved: (updated: StoredComment) => void,
+  ): void {
+    const body = item.querySelector<HTMLDivElement>(".wh-ext-comment-body")!;
+    body.innerHTML = `
+      <div class="wh-ext-edit-wrap">
+        <textarea class="wh-ext-edit-input">${escapeHtml(comment.text)}</textarea>
+        <div class="wh-ext-edit-actions">
+          <button class="wh-ext-edit-cancel" title="Cancel (Esc)">
+            <svg width="11" height="11" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M1 1l8 8M9 1L1 9"/></svg>
+          </button>
+          <button class="wh-ext-edit-save" title="Save (Enter)">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1.5 6.5 4.5 9.5 10.5 2.5"/></svg>
+          </button>
+        </div>
+      </div>
+    `;
+
+    const textarea = body.querySelector<HTMLTextAreaElement>(".wh-ext-edit-input")!;
+    textarea.focus();
+    textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
+
+    const save = () => {
+      const text = textarea.value.trim();
+      if (!text) return;
+      chrome.runtime.sendMessage(
+        { type: "UPDATE_COMMENT", highlightId, commentId: comment.id, text },
+        (resp) => { if (resp?.success) onSaved(resp.comment); },
+      );
+    };
+
+    textarea.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); save(); }
+      if (e.key === "Escape") onSaved(comment); // cancel — re-render with original
+    });
+    body.querySelector<HTMLButtonElement>(".wh-ext-edit-cancel")!.addEventListener("click", () => onSaved(comment));
+    body.querySelector<HTMLButtonElement>(".wh-ext-edit-save")!.addEventListener("click", save);
+  }
+
+  // ─── Highlight restoration ────────────────────────────────────────────────
 
   function removeHighlightMark(id: string): void {
     const safeId = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(id) : id.replace(/["\\]/g, "\\$&");
-    const marks = document.querySelectorAll<HTMLElement>(`.wh-ext-mark[data-wh-id=\"${safeId}\"]`);
+    const marks = document.querySelectorAll<HTMLElement>(`.wh-ext-mark[data-wh-id="${safeId}"]`);
     marks.forEach((mark) => {
       const parent = mark.parentNode!;
-      while (mark.firstChild) {
-        parent.insertBefore(mark.firstChild, mark);
-      }
+      while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
       parent.removeChild(mark);
       (parent as Element).normalize?.();
     });
@@ -557,8 +714,8 @@ interface PendingSelection {
 
   function restoreHighlights(): void {
     const url = normalizeUrl(window.location.href);
-    chrome.storage.local.get(["highlights"], (result) => {
-      const highlights: StoredHighlight[] = result.highlights || [];
+    chrome.storage.local.get(["highlights"], (result: Record<string, any>) => {
+      const highlights: StoredHighlight[] = result["highlights"] || [];
       const pageHighlights = highlights.filter((h) => normalizeUrl(h.url) === url);
       if (pageHighlights.length === 0) return;
 
@@ -600,7 +757,7 @@ interface PendingSelection {
           if (!node.textContent) return NodeFilter.FILTER_REJECT;
           const parent = (node as Text).parentElement;
           if (!parent) return NodeFilter.FILTER_ACCEPT;
-          if (parent.closest(".wh-ext-mark, .wh-ext-toolbar, .wh-ext-popover, .wh-ext-comment-dialog, #wh-ext-toolbar, #wh-ext-popover, #wh-ext-comment-dialog")) {
+          if (parent.closest(".wh-ext-mark, .wh-ext-toolbar, .wh-ext-popover, #wh-ext-toolbar, #wh-ext-popover")) {
             return NodeFilter.FILTER_REJECT;
           }
           const tag = parent.tagName;
@@ -612,9 +769,7 @@ interface PendingSelection {
       }
     );
     let n: Node | null;
-    while ((n = walker.nextNode())) {
-      nodes.push(n as Text);
-    }
+    while ((n = walker.nextNode())) nodes.push(n as Text);
     return nodes;
   }
 
@@ -728,7 +883,7 @@ interface PendingSelection {
       backgroundColor: highlight.styleBackgroundColor || "#FFF59D",
       color: highlight.styleColor || "#000000",
     });
-    marks.forEach((m) => addHighlightTooltip(m, highlight));
+    marks.forEach((m) => attachPopoverTrigger(m, highlight.id));
   }
 
   function normalizeSpaces(value: string): string {
@@ -777,13 +932,6 @@ interface PendingSelection {
     if (toolbar) {
       toolbar.remove();
       toolbar = null;
-    }
-  }
-
-  function removeCommentDialog(): void {
-    if (commentDialog) {
-      commentDialog.remove();
-      commentDialog = null;
     }
   }
 
@@ -860,7 +1008,7 @@ interface PendingSelection {
       try {
         const parsed = new URL(rawHref, window.location.href);
         if (parsed.protocol === "http:" || parsed.protocol === "https:" || parsed.protocol === "mailto:") {
-          return '<a href=\"' + escapeAttribute(parsed.toString()) + '\" target=\"_blank\" rel=\"noopener\" style=\"color:#3b82f6;text-decoration:underline;\">' + label + "</a>";
+          return '<a href="' + escapeAttribute(parsed.toString()) + '" target="_blank" rel="noopener" style="color:#3b82f6;text-decoration:underline;">' + label + "</a>";
         }
       } catch (_e) { /* ignore */ }
       return label;

@@ -1,12 +1,18 @@
 import type { PageWithHighlights, HighlightWithComments, HighlightStyle, Comment } from "@shared/schema";
 
+interface StoredComment {
+  id: string;
+  text: string;
+  createdAt: string;
+}
+
 interface ChromeHighlight {
   id: string;
   url: string;
   pageTitle: string;
   favicon: string | null;
   selectedText: string;
-  comment: string | null;
+  comments: StoredComment[];
   styleId: string;
   styleName: string;
   styleColor: string;
@@ -30,7 +36,7 @@ interface ChromeStyle {
 
 function getChromeStorage<T>(key: string): Promise<T | undefined> {
   return new Promise((resolve) => {
-    chrome.storage.local.get([key], (result) => {
+    chrome.storage.local.get([key], (result: Record<string, any>) => {
       resolve(result[key] as T | undefined);
     });
   });
@@ -65,7 +71,7 @@ export async function getChromePages(): Promise<PageWithHighlights[]> {
   });
 
   const pages: PageWithHighlights[] = [];
-  for (const [url, pageHighlights] of pageMap) {
+  for (const [url, pageHighlights] of Array.from(pageMap.entries())) {
     const first = pageHighlights[0];
     const hlWithComments: HighlightWithComments[] = pageHighlights.map((h) => {
       const style = styles.find((s) => s.id === h.styleId) || {
@@ -78,9 +84,12 @@ export async function getChromePages(): Promise<PageWithHighlights[]> {
         sortOrder: 0,
       };
 
-      const comments: Comment[] = h.comment
-        ? [{ id: `comment-${h.id}`, highlightId: h.id, text: h.comment, createdAt: new Date(h.createdAt) }]
-        : [];
+      const comments: Comment[] = (h.comments || []).map((c: StoredComment) => ({
+        id: c.id,
+        highlightId: h.id,
+        text: c.text,
+        createdAt: new Date(c.createdAt),
+      }));
 
       return {
         id: h.id,
@@ -189,24 +198,40 @@ export async function chromeDeleteStyle(id: string): Promise<void> {
 export async function chromeAddComment(data: { highlightId: string; text: string }): Promise<Comment> {
   const highlights = (await getChromeStorage<ChromeHighlight[]>("highlights")) || [];
   const hl = highlights.find((h) => h.id === data.highlightId);
+  const newComment: StoredComment = {
+    id: `c_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+    text: data.text,
+    createdAt: new Date().toISOString(),
+  };
   if (hl) {
-    hl.comment = hl.comment ? hl.comment + "\n---\n" + data.text : data.text;
+    if (!hl.comments) hl.comments = [];
+    hl.comments.push(newComment);
     await setChromeStorage({ highlights });
   }
   return {
-    id: `comment-${Date.now()}`,
+    id: newComment.id,
     highlightId: data.highlightId,
-    text: data.text,
-    createdAt: new Date(),
+    text: newComment.text,
+    createdAt: new Date(newComment.createdAt),
   };
 }
 
-export async function chromeDeleteComment(id: string): Promise<void> {
-  const highlightId = id.replace("comment-", "");
+export async function chromeUpdateComment(id: string, highlightId: string, text: string): Promise<Comment> {
+  const highlights = (await getChromeStorage<ChromeHighlight[]>("highlights")) || [];
+  const hl = highlights.find((h) => h.id === highlightId);
+  if (!hl) throw new Error("Highlight not found");
+  const c = (hl.comments || []).find((c) => c.id === id);
+  if (!c) throw new Error("Comment not found");
+  c.text = text;
+  await setChromeStorage({ highlights });
+  return { id: c.id, highlightId, text: c.text, createdAt: new Date(c.createdAt) };
+}
+
+export async function chromeDeleteComment(id: string, highlightId: string): Promise<void> {
   const highlights = (await getChromeStorage<ChromeHighlight[]>("highlights")) || [];
   const hl = highlights.find((h) => h.id === highlightId);
   if (hl) {
-    hl.comment = null;
+    hl.comments = (hl.comments || []).filter((c) => c.id !== id);
     await setChromeStorage({ highlights });
   }
 }

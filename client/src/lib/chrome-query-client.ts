@@ -8,6 +8,7 @@ import {
   chromeUpdateStyle,
   chromeDeleteStyle,
   chromeAddComment,
+  chromeUpdateComment,
   chromeDeleteComment,
   chromeExportData,
 } from "./chrome-storage";
@@ -51,7 +52,18 @@ async function chromeApiRequest(
   }
 
   if (method === "POST" && url === "/api/comments") {
-    const result = await chromeAddComment(data as { highlightId: string; text: string });
+    const payload = data as { highlightId: string; text: string };
+    const result = await chromeAddComment(payload);
+    return new Response(JSON.stringify(result), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  if (method === "PATCH" && url.match(/^\/api\/comments\//)) {
+    const id = url.split("/").pop()!;
+    const payload = data as { highlightId: string; text: string };
+    const result = await chromeUpdateComment(id, payload.highlightId, payload.text);
     return new Response(JSON.stringify(result), {
       status: 200,
       headers: { "Content-Type": "application/json" },
@@ -59,8 +71,10 @@ async function chromeApiRequest(
   }
 
   if (method === "DELETE" && url.match(/^\/api\/comments\//)) {
-    const id = url.split("/").pop()!;
-    await chromeDeleteComment(id);
+    const parts = url.split("/");
+    const id = parts[parts.length - 1];
+    const highlightId = (data as { highlightId: string })?.highlightId || "";
+    await chromeDeleteComment(id, highlightId);
     return new Response("OK", { status: 200 });
   }
 

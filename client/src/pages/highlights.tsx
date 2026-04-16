@@ -5,12 +5,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Highlighter, Search, Trash2, MessageSquare, Globe, Filter, X } from "lucide-react";
+import { Highlighter, Search, Trash2, MessageSquare, Globe, Filter, X, ExternalLink, Pencil } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { formatDistanceToNow } from "date-fns";
 import { useState, useMemo } from "react";
 import { MarkdownComment } from "@/components/markdown-comment";
+import { HighlightEditPanel } from "@/components/highlight-edit-panel";
 import {
   Select,
   SelectContent,
@@ -19,10 +20,27 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
+function buildTextFragmentUrl(pageUrl: string, selectedText: string): string {
+  const text = selectedText.trim();
+  const words = text.split(/\s+/);
+  let fragment: string;
+  if (words.length <= 8) {
+    fragment = encodeURIComponent(text);
+  } else {
+    const start = words.slice(0, 4).join(" ");
+    const end = words.slice(-4).join(" ");
+    fragment = `${encodeURIComponent(start)},${encodeURIComponent(end)}`;
+  }
+  const hashIndex = pageUrl.indexOf("#");
+  const baseUrl = hashIndex >= 0 ? pageUrl.slice(0, hashIndex) : pageUrl;
+  return `${baseUrl}#:~:text=${fragment}`;
+}
+
 export default function Highlights() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedPageId, setSelectedPageId] = useState<string>("all");
   const [selectedStyleName, setSelectedStyleName] = useState<string>("all");
+  const [editingId, setEditingId] = useState<string | null>(null);
   const { toast } = useToast();
 
   const { data: pages, isLoading } = useQuery<PageWithHighlights[]>({
@@ -178,7 +196,7 @@ export default function Highlights() {
                         </span>
                       )}
                     </div>
-                    {highlight.comments.length > 0 && (
+                    {editingId !== highlight.id && highlight.comments.length > 0 && (
                       <div className="mt-3 space-y-1.5 pl-3 border-l-2 border-border">
                         {highlight.comments.slice(0, 2).map((c) => (
                           <MarkdownComment key={c.id} text={c.text} className="text-xs text-muted-foreground" />
@@ -189,15 +207,40 @@ export default function Highlights() {
                       </div>
                     )}
                   </div>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    onClick={() => deleteHighlight.mutate(highlight.id)}
-                    data-testid={`button-delete-highlight-${highlight.id}`}
-                  >
-                    <Trash2 className="w-4 h-4 text-muted-foreground" />
-                  </Button>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => window.open(buildTextFragmentUrl(highlight.page.url, highlight.selectedText), "_blank")}
+                      title="Open and scroll to highlight"
+                      data-testid={`button-open-page-${highlight.id}`}
+                    >
+                      <ExternalLink className="w-4 h-4 text-muted-foreground" />
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant={editingId === highlight.id ? "secondary" : "ghost"}
+                      onClick={() => setEditingId(editingId === highlight.id ? null : highlight.id)}
+                      title={editingId === highlight.id ? "Close edit" : "Edit comments"}
+                      data-testid={`button-edit-highlight-${highlight.id}`}
+                    >
+                      <Pencil className="w-4 h-4 text-muted-foreground" />
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => deleteHighlight.mutate(highlight.id)}
+                      data-testid={`button-delete-highlight-${highlight.id}`}
+                    >
+                      <Trash2 className="w-4 h-4 text-muted-foreground" />
+                    </Button>
+                  </div>
                 </div>
+                {editingId === highlight.id && (
+                  <div className="mt-4 border-t pt-4">
+                    <HighlightEditPanel highlight={highlight} />
+                  </div>
+                )}
               </CardContent>
             </Card>
           ))}

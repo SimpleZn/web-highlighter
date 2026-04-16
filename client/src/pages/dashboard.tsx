@@ -62,7 +62,18 @@ function PageCard({ page }: { page: PageWithHighlights }) {
                 <Clock className="w-3 h-3" />
                 {page.lastVisited && formatDistanceToNow(new Date(page.lastVisited), { addSuffix: true })}
               </div>
-              <ArrowRight className="w-4 h-4 text-muted-foreground" />
+              <div className="flex items-center gap-1">
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="w-6 h-6"
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); window.open(page.url, "_blank"); }}
+                  title="Open original page"
+                >
+                  <ExternalLink className="w-3.5 h-3.5 text-muted-foreground" />
+                </Button>
+                <ArrowRight className="w-4 h-4 text-muted-foreground" />
+              </div>
             </div>
           </div>
           {page.highlights.length > 0 && (

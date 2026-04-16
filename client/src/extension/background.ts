@@ -1,9 +1,14 @@
+interface StoredComment {
+  id: string;
+  text: string;
+  createdAt: string;
+}
+
 interface HighlightData {
   url: string;
   pageTitle: string;
   favicon: string;
   selectedText: string;
-  comment: string | null;
   styleId: string;
   styleName: string;
   styleColor: string;
@@ -16,6 +21,7 @@ interface HighlightData {
 interface StoredHighlight extends HighlightData {
   id: string;
   createdAt: string;
+  comments: StoredComment[];
   synced: boolean;
 }
 
@@ -41,7 +47,6 @@ interface SaveResult {
 }
 
 const CONTEXT_MENU_HIGHLIGHT = "wh-highlight";
-const CONTEXT_MENU_COMMENT = "wh-comment";
 
 const DEFAULT_STYLES: HighlightStyle[] = [
   { id: "default-yellow", name: "Yellow", color: "#000000", backgroundColor: "#FFF59D", borderColor: "#F9A825", isDefault: true, sortOrder: 0 },
@@ -59,14 +64,8 @@ chrome.runtime.onInstalled.addListener(() => {
     contexts: ["selection"],
   });
 
-  chrome.contextMenus.create({
-    id: CONTEXT_MENU_COMMENT,
-    title: "Highlight & Comment",
-    contexts: ["selection"],
-  });
-
-  chrome.storage.local.get(["styles"], (result) => {
-    if (!result.styles || result.styles.length === 0) {
+  chrome.storage.local.get(["styles"], (result: Record<string, any>) => {
+    if (!result["styles"] || result["styles"].length === 0) {
       chrome.storage.local.set({ styles: DEFAULT_STYLES, enabled: true });
     }
   });
@@ -74,15 +73,9 @@ chrome.runtime.onInstalled.addListener(() => {
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (!tab?.id) return;
-
   if (info.menuItemId === CONTEXT_MENU_HIGHLIGHT) {
     chrome.tabs.sendMessage(tab.id, {
       type: "HIGHLIGHT_SELECTION",
-      text: info.selectionText,
-    });
-  } else if (info.menuItemId === CONTEXT_MENU_COMMENT) {
-    chrome.tabs.sendMessage(tab.id, {
-      type: "COMMENT_SELECTION",
       text: info.selectionText,
     });
   }
@@ -103,15 +96,50 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === "GET_HIGHLIGHT") {
+    getHighlightById(message.id).then((highlight) => {
+      sendResponse({ highlight });
+    });
+    return true;
+  }
+
   if (message.type === "GET_STYLES") {
-    chrome.storage.local.get(["styles"], (result) => {
-      sendResponse({ styles: result.styles || [] });
+    chrome.storage.local.get(["styles"], (result: Record<string, any>) => {
+      sendResponse({ styles: result["styles"] || [] });
     });
     return true;
   }
 
   if (message.type === "DELETE_HIGHLIGHT") {
     deleteHighlight(message.id).then(() => {
+      sendResponse({ success: true });
+    });
+    return true;
+  }
+
+  if (message.type === "UPDATE_HIGHLIGHT_STYLE") {
+    updateHighlightStyle(message.id, message.style).then((result) => {
+      sendResponse(result);
+    });
+    return true;
+  }
+
+  if (message.type === "ADD_COMMENT") {
+    addComment(message.highlightId, message.text).then((comment) => {
+      sendResponse({ success: true, comment });
+    });
+    return true;
+  }
+
+  if (message.type === "UPDATE_COMMENT") {
+    updateComment(message.highlightId, message.commentId, message.text).then((comment) => {
+      sendResponse({ success: true, comment });
+    });
+    return true;
+  }
+
+  if (message.type === "DELETE_COMMENT") {
+    deleteComment(message.highlightId, message.commentId).then(() => {
       sendResponse({ success: true });
     });
     return true;
@@ -134,15 +162,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 async function saveHighlight(data: HighlightData): Promise<SaveResult> {
   return new Promise((resolve) => {
-    chrome.storage.local.get(["highlights"], (result) => {
-      const highlights: StoredHighlight[] = result.highlights || [];
+    chrome.storage.local.get(["highlights"], (result: Record<string, any>) => {
+      const highlights: StoredHighlight[] = result["highlights"] || [];
       const highlight: StoredHighlight = {
         id: "hl_" + Date.now() + "_" + Math.random().toString(36).substr(2, 9),
         url: data.url,
         pageTitle: data.pageTitle,
         favicon: data.favicon,
         selectedText: data.selectedText,
-        comment: data.comment || null,
+        comments: [],
         styleId: data.styleId,
         styleName: data.styleName,
         styleColor: data.styleColor,
@@ -163,9 +191,34 @@ async function saveHighlight(data: HighlightData): Promise<SaveResult> {
 
 async function getHighlightsForUrl(url: string): Promise<StoredHighlight[]> {
   return new Promise((resolve) => {
-    chrome.storage.local.get(["highlights"], (result) => {
-      const highlights: StoredHighlight[] = result.highlights || [];
+    chrome.storage.local.get(["highlights"], (result: Record<string, any>) => {
+      const highlights: StoredHighlight[] = result["highlights"] || [];
       resolve(highlights.filter((h) => h.url === url));
+    });
+  });
+}
+
+async function getHighlightById(id: string): Promise<StoredHighlight | null> {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(["highlights"], (result: Record<string, any>) => {
+      const highlights: StoredHighlight[] = result["highlights"] || [];
+      resolve(highlights.find((h) => h.id === id) || null);
+    });
+  });
+}
+
+async function updateHighlightStyle(id: string, style: HighlightStyle): Promise<{ success: boolean }> {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(["highlights"], (result: Record<string, any>) => {
+      const highlights: StoredHighlight[] = result["highlights"] || [];
+      const hl = highlights.find((h) => h.id === id);
+      if (!hl) { resolve({ success: false }); return; }
+      hl.styleId = style.id;
+      hl.styleName = style.name;
+      hl.styleColor = style.color;
+      hl.styleBackgroundColor = style.backgroundColor;
+      hl.synced = false;
+      chrome.storage.local.set({ highlights }, () => resolve({ success: true }));
     });
   });
 }
@@ -181,16 +234,69 @@ async function deleteHighlight(id: string): Promise<{ success: boolean }> {
   });
 }
 
+async function addComment(highlightId: string, text: string): Promise<StoredComment> {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(["highlights"], (result: Record<string, any>) => {
+      const highlights: StoredHighlight[] = result["highlights"] || [];
+      const hl = highlights.find((h) => h.id === highlightId);
+      const comment: StoredComment = {
+        id: "c_" + Date.now() + "_" + Math.random().toString(36).substr(2, 9),
+        text,
+        createdAt: new Date().toISOString(),
+      };
+      if (hl) {
+        if (!hl.comments) hl.comments = [];
+        hl.comments.push(comment);
+        hl.synced = false;
+        chrome.storage.local.set({ highlights }, () => resolve(comment));
+      } else {
+        resolve(comment);
+      }
+    });
+  });
+}
+
+async function updateComment(highlightId: string, commentId: string, text: string): Promise<StoredComment | null> {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(["highlights"], (result: Record<string, any>) => {
+      const highlights: StoredHighlight[] = result["highlights"] || [];
+      const hl = highlights.find((h) => h.id === highlightId);
+      if (!hl) { resolve(null); return; }
+      const c = (hl.comments || []).find((c) => c.id === commentId);
+      if (!c) { resolve(null); return; }
+      c.text = text;
+      hl.synced = false;
+      chrome.storage.local.set({ highlights }, () => resolve(c));
+    });
+  });
+}
+
+async function deleteComment(highlightId: string, commentId: string): Promise<void> {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(["highlights"], (result: Record<string, any>) => {
+      const highlights: StoredHighlight[] = result["highlights"] || [];
+      const hl = highlights.find((h) => h.id === highlightId);
+      if (hl) {
+        hl.comments = (hl.comments || []).filter((c) => c.id !== commentId);
+        hl.synced = false;
+        chrome.storage.local.set({ highlights }, resolve);
+      } else {
+        resolve();
+      }
+    });
+  });
+}
+
 async function syncToServer(): Promise<SyncResult> {
   return new Promise((resolve) => {
-    chrome.storage.local.get(["highlights", "serverUrl"], async (result) => {
-      const serverUrl = result.serverUrl as string | undefined;
+    chrome.storage.local.get(["highlights", "serverUrl"], async (result: Record<string, any>) => {
+      const serverUrl = result["serverUrl"] as string | undefined;
       if (!serverUrl) {
         resolve({ success: false, error: "Server URL not configured" });
         return;
       }
 
-      const highlights = ((result.highlights || []) as StoredHighlight[]).filter((h) => !h.synced);
+      const highlights = ((result["highlights"] || []) as StoredHighlight[]).filter((h) => !h.synced);
       if (highlights.length === 0) {
         resolve({ success: true, message: "Nothing to sync" });
         return;
@@ -239,23 +345,25 @@ async function syncToServer(): Promise<SyncResult> {
             }),
           });
 
-          if (hlRes.ok && h.comment) {
+          if (hlRes.ok && h.comments && h.comments.length > 0) {
             const hlData = await hlRes.json();
-            await fetch(`${serverUrl}/api/comments`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                highlightId: hlData.id,
-                text: h.comment,
-              }),
-            });
+            for (const comment of h.comments) {
+              await fetch(`${serverUrl}/api/comments`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  highlightId: hlData.id,
+                  text: comment.text,
+                }),
+              });
+            }
           }
 
           h.synced = true;
         }
 
-        chrome.storage.local.get(["highlights"], (res) => {
-          const all = (res.highlights || []) as StoredHighlight[];
+        chrome.storage.local.get(["highlights"], (res: Record<string, any>) => {
+          const all = (res["highlights"] || []) as StoredHighlight[];
           const updated = all.map((existing) => {
             const synced = highlights.find((s) => s.id === existing.id);
             return synced ? { ...existing, synced: true } : existing;
@@ -273,8 +381,8 @@ async function syncToServer(): Promise<SyncResult> {
 
 async function syncFromServer(): Promise<SyncResult> {
   return new Promise((resolve) => {
-    chrome.storage.local.get(["serverUrl"], async (result) => {
-      const serverUrl = result.serverUrl as string | undefined;
+    chrome.storage.local.get(["serverUrl"], async (result: Record<string, any>) => {
+      const serverUrl = result["serverUrl"] as string | undefined;
       if (!serverUrl) {
         resolve({ success: false, error: "Server URL not configured" });
         return;

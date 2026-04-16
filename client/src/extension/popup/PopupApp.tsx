@@ -7,12 +7,18 @@ import { Label } from "@/components/ui/label";
 import { Highlighter, MessageSquare, Globe, Trash2, RefreshCw, LayoutDashboard, Settings } from "lucide-react";
 import { MarkdownComment } from "@/components/markdown-comment";
 
+interface StoredComment {
+  id: string;
+  text: string;
+  createdAt: string;
+}
+
 interface ChromeHighlight {
   id: string;
   url: string;
   pageTitle: string;
   selectedText: string;
-  comment: string | null;
+  comments: StoredComment[];
   styleName: string;
   styleBackgroundColor: string;
   createdAt: string;
@@ -36,12 +42,12 @@ export default function PopupApp() {
   const [toast, setToast] = useState<{ message: string; type: string } | null>(null);
 
   const loadData = useCallback(() => {
-    chrome.storage.local.get(["highlights", "styles", "enabled"], (result) => {
-      const allHighlights = result.highlights || [];
-      const allStyles = result.styles || [];
+    chrome.storage.local.get(["highlights", "styles", "enabled"], (result: Record<string, any>) => {
+      const allHighlights: ChromeHighlight[] = result["highlights"] || [];
+      const allStyles: ChromeStyle[] = result["styles"] || [];
       setHighlights(allHighlights);
       setStyles(allStyles);
-      setEnabled(result.enabled !== false);
+      setEnabled(result["enabled"] !== false);
 
       const defaultIdx = allStyles.findIndex((s: ChromeStyle) => s.isDefault);
       if (defaultIdx >= 0) setActiveStyleIndex(defaultIdx);
@@ -103,7 +109,7 @@ export default function PopupApp() {
     });
   };
 
-  const commentCount = highlights.filter((h) => h.comment).length;
+  const commentCount = highlights.reduce((sum, h) => sum + (h.comments?.length || 0), 0);
 
   return (
     <div className="w-[360px] bg-background text-foreground" data-testid="popup-root">
@@ -198,11 +204,16 @@ export default function PopupApp() {
                       />
                       <div className="flex-1 min-w-0">
                         <p className="text-xs leading-relaxed line-clamp-2">{h.selectedText}</p>
-                        {h.comment && (
+                        {h.comments?.length > 0 && (
                           <MarkdownComment
-                            text={h.comment}
+                            text={h.comments[0].text}
                             className="text-[11px] text-muted-foreground mt-1 line-clamp-2"
                           />
+                        )}
+                        {h.comments?.length > 1 && (
+                          <span className="text-[10px] text-muted-foreground">
+                            +{h.comments.length - 1} more comment{h.comments.length > 2 ? "s" : ""}
+                          </span>
                         )}
                       </div>
                       <button
