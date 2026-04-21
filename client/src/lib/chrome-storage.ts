@@ -227,13 +227,16 @@ export async function chromeUpdateComment(id: string, highlightId: string, text:
   return { id: c.id, highlightId, text: c.text, createdAt: new Date(c.createdAt) };
 }
 
-export async function chromeDeleteComment(id: string, highlightId: string): Promise<void> {
+export async function chromeDeleteComment(id: string, highlightId?: string): Promise<void> {
   const highlights = (await getChromeStorage<ChromeHighlight[]>("highlights")) || [];
-  const hl = highlights.find((h) => h.id === highlightId);
-  if (hl) {
+  const targets = highlightId ? highlights.filter((h) => h.id === highlightId) : highlights;
+  let changed = false;
+  for (const hl of targets) {
+    const before = (hl.comments || []).length;
     hl.comments = (hl.comments || []).filter((c) => c.id !== id);
-    await setChromeStorage({ highlights });
+    if (hl.comments.length !== before) changed = true;
   }
+  if (changed) await setChromeStorage({ highlights });
 }
 
 export async function chromeExportData(): Promise<Record<string, unknown>> {
